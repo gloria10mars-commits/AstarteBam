@@ -1,0 +1,113 @@
+name: Build Debian Package
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # Permet de lancer manuellement depuis l'interface GitHub
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Create Deb Package Structure
+        run: |
+          echo "Setting up debian package structure..."
+          mkdir -p astartebam_6.0.0_amd64/opt/astartebam
+          mkdir -p astartebam_6.0.0_amd64/usr/bin
+          mkdir -p astartebam_6.0.0_amd64/DEBIAN
+
+      - name: Create Control File
+        run: |
+          cat << 'CONTROL' > astartebam_6.0.0_amd64/DEBIAN/control
+          Package: astartebam
+          Version: 6.0.0
+          Section: utils
+          Priority: optional
+          Architecture: amd64
+          Depends: python3, python3-venv, firefox | firefox-esr, xvfb
+          Maintainer: Leon Astarte <leon@astarte.local>
+          Description: Astarte BAM v6.0 - Orchestrateur d'Agents IA Locaux
+           Orchestrateur Dual-Expert (DeepSeek + Gemini) avec interface CLI.
+          CONTROL
+
+      - name: Create Postinst Script
+        run: |
+          cat << 'POSTINST' > astartebam_6.0.0_amd64/DEBIAN/postinst
+          #!/bin/bash
+          set -e
+          # Creer l'environnement virtuel pour AstarteBam globalement
+          if [ ! -d "/opt/astartebam/.venv" ]; then
+              python3 -m venv /opt/astartebam/.venv
+          fi
+          # Mettre a jour pip
+          /opt/astartebam/.venv/bin/pip install --upgrade pip
+          chown -R root:root /opt/astartebam
+          chmod 755 /usr/bin/astarte
+          exit 0
+          POSTINST
+          chmod 755 astartebam_6.0.0_amd64/DEBIAN/postinst
+
+      - name: Package Application Files
+        run: |
+          # Copy source files to opt directory
+          rsync -av --exclude='.git' --exclude='.github' --exclude='astartebam_6.0.0_amd64' --exclude='.venv' --exclude='venv' --exclude='__pycache__' --exclude='.env' ./ astartebam_6.0.0_amd64/opt/astartebam/
+          
+          # Inject First Run logic into the astarte executable link
+          cat << 'LAUNCHER' > astartebam_6.0.0_amd64/usr/bin/astarte
+          #!/bin/bash
+          # AstarteBam System Launcher
+          INSTALL_DIR="/opt/astartebam"
+          USER_PROFILE_DIR="$HOME/.mozilla/firefox"
+          
+          echo "=== Démarrage AstarteBam ==="
+          
+          # 1. Verification de l'environnement virtuel local
+          if [ ! -f "$INSTALL_DIR/.venv/bin/python" ]; then
+              echo "Initialisation de l'environnement Python global..."
+              sudo python3 -m venv "$INSTALL_DIR/.venv"
+              sudo "$INSTALL_DIR/.venv/bin/pip" install browser-cookie3 curl_cffi fastapi uvicorn aiohttp requests pydantic
+              sudo chown -R $USER:$USER "$INSTALL_DIR/.venv"
+          fi
+          
+          # 2. Injection de l'extension Firefox dans le profil de l'utilisateur courant
+          if [ -d "$USER_PROFILE_DIR" ]; then
+              for profile in "$USER_PROFILE_DIR"/*.default*; do
+                  if [ -d "$profile" ]; then
+                      mkdir -p "$profile/extensions"
+                      cp "$INSTALL_DIR/bridges/deepseek/extension/nemapi-bridge@local.xpi" "$profile/extensions/" 2>/dev/null || true
+                      
+                      # Forcer Firefox a accepter les extensions non signees
+                      if ! grep -q "xpinstall.signatures.required" "$profile/user.js" 2>/dev/null; then
+                          echo 'user_pref("xpinstall.signatures.required", false);' >> "$profile/user.js"
+                          echo 'user_pref("extensions.autoDisableScopes", 0);' >> "$profile/user.js"
+                      fi
+                  fi
+              done
+          fi
+          
+          # 3. Lancement du programme
+          cd "$INSTALL_DIR"
+          export ASTARTE_PYTHON="$INSTALL_DIR/.venv/bin/python"
+          exec ./astarte "$@"
+          LAUNCHER
+          chmod 755 astartebam_6.0.0_amd64/usr/bin/astarte
+
+      - name: Build Deb Package
+        run: |
+          dpkg-deb --build astartebam_6.0.0_amd64
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: astartebam-debian-package
+          path: astartebam_6.0.0_amd64.deb
