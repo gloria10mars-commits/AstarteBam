@@ -1,0 +1,18 @@
+{
+  "url": "https://videos2.sendvid.com/37/fd/o5ovrbxk.mp4?validfrom=1783661324&validto=1783675724&rate=250k&ip=196.171.64.104&hash=uIjTa5ay6kY6Y2wd4qtoqsvH%2B0Q%3D",
+  "filename": "o5ovrbxk.mp4",
+  "total_size": 252045455,
+  "num_segments": 4,
+  "segment_files": [
+    "o5ovrbxk.mp4.part0",
+    "o5ovrbxk.mp4.part1",
+    "o5ovrbxk.mp4.part2",
+    "o5ovrbxk.mp4.part3"
+  ],
+  "segment_progress": {
+    "0": 0,
+    "1": 0,
+    "2": 0,
+    "3": 0
+  }
+}

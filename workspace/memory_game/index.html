@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🧠 Memory Game</title>
+<style>
+:root {
+  --bg: #1a1a2e;
+  --card-bg: #16213e;
+  --accent: #e94560;
+  --gold: #f0c040;
+  --text: #eee;
+  --muted: #888;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: var(--bg);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  font-family: system-ui, sans-serif;
+  flex-direction: column;
+  gap: 24px;
+  padding: 20px;
+}
+h1 {
+  color: var(--text);
+  font-size: 2rem;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+}
+.stats {
+  display: flex;
+  gap: 30px;
+  color: var(--muted);
+  font-size: 1rem;
+}
+.stats span {
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 1.2rem;
+}
+.grille {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  width: min(90vw, 480px);
+}
+.carte {
+  aspect-ratio: 1;
+  perspective: 800px;
+  cursor: pointer;
+}
+.carte-inner {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  transform-style: preserve-3d;
+  transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.carte.retournee .carte-inner {
+  transform: rotateY(180deg);
+}
+.carte-face, .carte-dos {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  backface-visibility: hidden;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2.5rem;
+}
+.carte-dos {
+  background: linear-gradient(135deg, var(--card-bg), #0f3460);
+  border: 2px solid var(--accent);
+  box-shadow: 0 4px 15px rgba(233,69,96,0.2);
+}
+.carte-dos::after {
+  content: '?';
+  color: var(--accent);
+  font-size: 2rem;
+  font-weight: 700;
+  opacity: 0.6;
+}
+.carte-face {
+  background: linear-gradient(135deg, #1a3a5c, #0f3460);
+  border: 2px solid var(--gold);
+  transform: rotateY(180deg);
+  box-shadow: 0 4px 15px rgba(240,192,64,0.3);
+}
+.carte.trouvee .carte-face {
+  border-color: #4caf50;
+  box-shadow: 0 0 20px rgba(76,175,80,0.5);
+  animation: pulse 0.6s ease;
+}
+@keyframes pulse {
+  0%, 100% { transform: rotateY(180deg) scale(1); }
+  50% { transform: rotateY(180deg) scale(1.08); }
+}
+.btn {
+  padding: 12px 30px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 25px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  letter-spacing: 1px;
+  transition: all 0.2s;
+  display: none;
+}
+.btn:hover { background: #c23152; transform: translateY(-2px); }
+.btn.visible { display: block; }
+.victoire {
+  color: var(--gold);
+  font-size: 1.5rem;
+  font-weight: 700;
+  display: none;
+  animation: bounce 0.6s ease;
+}
+.victoire.visible { display: block; }
+@keyframes bounce {
+  0%, 100% { transform: translateY(0); }
+  40% { transform: translateY(-15px); }
+  60% { transform: translateY(-5px); }
+}
+@media (max-width: 400px) {
+  .grille { gap: 8px; }
+  .carte-face, .carte-dos { font-size: 1.8rem; border-radius: 10px; }
+}
+</style>
+</head>
+<body>
+<h1>🧠 Memory</h1>
+<div class="stats">
+  Coups : <span id="coups">0</span>
+  Paires : <span id="paires">0 / 8</span>
+</div>
+<div class="grille" id="grille"></div>
+<div class="victoire" id="victoire">🎉 Bravo ! Vous avez gagné ! 🎉</div>
+<button class="btn" id="rejouer" onclick="nouvellePartie()">🔄 Nouvelle Partie</button>
+
+<script>
+const emojis = ['🎮', '🎯', '🎨', '🎵', '🌟', '💎', '🔥', '🍀'];
+let cartes = [];
+let retournees = [];
+let coups = 0;
+let pairesTrouvees = 0;
+let lock = false;
+
+function melanger(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+function nouvellePartie() {
+  const toutes = [...emojis, ...emojis];
+  cartes = melanger(toutes);
+  retournees = [];
+  coups = 0;
+  pairesTrouvees = 0;
+  lock = false;
+  document.getElementById('coups').textContent = '0';
+  document.getElementById('paires').textContent = '0 / 8';
+  document.getElementById('victoire').classList.remove('visible');
+  document.getElementById('rejouer').classList.remove('visible');
+  render();
+}
+
+function render() {
+  const grille = document.getElementById('grille');
+  grille.innerHTML = '';
+  cartes.forEach((emoji, index) => {
+    const carte = document.createElement('div');
+    carte.className = 'carte';
+    carte.dataset.index = index;
+    carte.dataset.emoji = emoji;
+    carte.innerHTML = `
+      <div class="carte-inner">
+        <div class="carte-dos"></div>
+        <div class="carte-face">${emoji}</div>
+      </div>
+    `;
+    carte.addEventListener('click', () => clicCarte(carte, index));
+    grille.appendChild(carte);
+  });
+}
+
+function clicCarte(carte, index) {
+  if (lock) return;
+  if (carte.classList.contains('retournee')) return;
+  if (carte.classList.contains('trouvee')) return;
+  if (retournees.length >= 2) return;
+  if (retournees.length === 1 && retournees[0].index === index) return;
+
+  carte.classList.add('retournee');
+  retournees.push({ carte, index, emoji: cartes[index] });
+
+  if (retournees.length === 2) {
+    coups++;
+    document.getElementById('coups').textContent = coups;
+    verifierPaire();
+  }
+}
+
+function verifierPaire() {
+  const [a, b] = retournees;
+  if (a.emoji === b.emoji) {
+    setTimeout(() => {
+      a.carte.classList.add('trouvee');
+      b.carte.classList.add('trouvee');
+      pairesTrouvees++;
+      document.getElementById('paires').textContent = `${pairesTrouvees} / 8`;
+      retournees = [];
+      if (pairesTrouvees === 8) {
+        setTimeout(() => {
+          document.getElementById('victoire').classList.add('visible');
+          document.getElementById('rejouer').classList.add('visible');
+        }, 400);
+      }
+    }, 400);
+  } else {
+    lock = true;
+    setTimeout(() => {
+      a.carte.classList.remove('retournee');
+      b.carte.classList.remove('retournee');
+      retournees = [];
+      lock = false;
+    }, 800);
+  }
+}
+
+nouvellePartie();
+</script>
+</body>
+</html>

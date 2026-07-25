@@ -1,0 +1,55 @@
+{
+  "manifest_version": 3,
+  "name": "NEMAPI Bridge",
+  "version": "2.7",
+  "description": "Proxy OpenAI ↔ DeepSeek : send + réception stable + auto-récupération UI après clics manuels + fichiers.",
+  
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting",
+    "clipboardRead",
+    "clipboardWrite",
+    "tabs",
+    "alarms"
+  ],
+  
+  "host_permissions": [
+    "*://*/*"
+  ],
+  
+  "background": {
+    "scripts": ["background.js"]
+  },
+  
+  "content_scripts": [
+    {
+      "matches": ["*://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  
+  "web_accessible_resources": [
+    {
+      "resources": ["floating.html", "floating.js"],
+      "matches": ["*://*/*"]
+    }
+  ],
+  
+  "action": {
+    "default_title": "NEMAPI Bridge",
+    "default_icon": {
+      "16": "icons/logo.png",
+      "48": "icons/logo.png",
+      "128": "icons/logo.png"
+    }
+  },
+  
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "nemapi-bridge@local",
+      "strict_min_version": "109.0"
+    }
+  }
+}

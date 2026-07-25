@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jeu de Ludo</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <h1>Jeu de Ludo</h1>
+    <div id="game-container">
+        <!-- La grille du jeu sera générée par JavaScript -->
+        <div id="board" class="board"></div>
+        
+        <div id="controls">
+            <button id="roll-dice">Lancer le dé</button>
+            <h2 id="dice-result">Résultat: -</h2>
+            <h3 id="turn-indicator">Tour du joueur: <span id="current-player" class="text-red">Rouge</span></h3>
+            <p class="info">Ceci est la fondation visuelle et mécanique du Ludo.<br>La logique complète de déplacement des pions nécessite une évolution du code JS.</p>
+        </div>
+    </div>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

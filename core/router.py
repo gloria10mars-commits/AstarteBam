@@ -1,0 +1,44 @@
+from dataclasses import dataclass
+from typing import List
+
+@dataclass
+class RoutingDecision:
+    category: str
+    roles: List[str]
+    parallel: bool
+    confidence: float
+    explanation: str
+
+class IntelligentRouter:
+    DUAL_KEYWORDS = (
+        "projet", "application complète", "application complete",
+        "développer un", "developper un", "système de", "systeme de",
+        "créer une app", "creer une app", "crée un projet", "cree un projet",
+        "crée une application", "cree une application", "full stack", "fullstack",
+        "site web", "page web", "interface", "frontend", "front-end",
+        "jeu", "dashboard", "tableau de bord", "app web", "webapp",
+        "html", "css", "javascript", "react", "vue",
+        "page d'accueil", "presenter l'équipe", "présenter l'équipe",
+        "gemini fera le", "gemini s'occupe", "backend et gemini", "frontend", "front-end",
+    )
+    ARCH_KEYWORDS = ("architecture", "structure", "concevoir", "organiser")
+    SEC_KEYWORDS = ("faille", "securite", "sécurité", "vulnerabilite", "vulnérabilité")
+    CODE_KEYWORDS = ("python", "code", "bug", "api", "script", "fonction", "class ")
+
+    def route(self, prompt: str) -> RoutingDecision:
+        text = (prompt or "").lower()
+        if any(x in text for x in self.DUAL_KEYWORDS):
+            return RoutingDecision(
+                "dual_expert",
+                ["architect", "ui_expert", "logic_expert"],
+                True,
+                0.95,
+                "Flux Dual-Expert : DeepSeek (logique) + Gemini (UI).",
+            )
+        if any(x in text for x in self.ARCH_KEYWORDS):
+            return RoutingDecision("architect", ["planner", "code", "review"], False, 0.90, "Tâche structurelle.")
+        if any(x in text for x in self.SEC_KEYWORDS):
+            return RoutingDecision("security", ["research", "system", "review"], True, 0.85, "Alerte sécurité.")
+        if any(x in text for x in self.CODE_KEYWORDS):
+            return RoutingDecision("code", ["code", "review"], True, 0.80, "Développement.")
+        return RoutingDecision("general", ["planner", "review"], True, 0.50, "Demande générale.")

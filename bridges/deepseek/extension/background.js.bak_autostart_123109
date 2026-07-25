@@ -1,0 +1,389 @@
+// NEMAPI Bridge — Background v2.7 (DOM + UI recovery + job watchdog)
+
+let targetTabId = null;
+let pollTimer = null;
+let connected = false;
+let floatingWindowId = null;
+let jobInFlight = false;
+let jobInFlightSince = 0;
+let jobInFlightId = null;
+let jobWatchdogTimer = null;
+
+const PROXY_URL = "http://127.0.0.1:8080";
+const JOB_FLIGHT_MAX_MS = 12 * 60 * 1000;
+
+// ═══════════════════════════════════════════
+// Polling jobs
+// ═══════════════════════════════════════════
+
+async function startPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  console.log("[NEMAPI] Polling v2.7…");
+
+  const poll = async () => {
+    // Watchdog : jobInFlight coincé (onglet cliqué, content mort, etc.)
+    if (jobInFlight && jobInFlightSince && Date.now() - jobInFlightSince > JOB_FLIGHT_MAX_MS) {
+      console.warn("[NEMAPI] jobInFlight timeout — reset");
+      const stuckId = jobInFlightId;
+      jobInFlight = false;
+      jobInFlightSince = 0;
+      jobInFlightId = null;
+      if (stuckId) {
+        await postResult(
+          stuckId,
+          "error",
+          "Watchdog background: job coincé (UI/navigateur). Renvoyez le message."
+        );
+      }
+      if (targetTabId) {
+        try {
+          await sendToTab(targetTabId, { action: "forceUnlock", reason: "bg-watchdog" });
+        } catch (e) {}
+      }
+    }
+    if (jobInFlight) return; // un job à la fois — évite vol de job pendant wait
+    try {
+      const resp = await fetch(PROXY_URL + "/job");
+      const data = await resp.json();
+      if (data.action === "ask") {
+        connected = true;
+        const nFiles = (data.meta && data.meta.files && data.meta.files.length) || 0;
+        console.log("[NEMAPI] Job", data.jobId, "mode=send files=" + nFiles);
+        await executeJob(data);
+      } else if (data.action === "idle") {
+        connected = true;
+      }
+    } catch (e) {
+      connected = false;
+    }
+  };
+
+  await poll();
+  pollTimer = setInterval(poll, 1500);
+
+  // Filet anti-throttling Firefox : les alarms ne sont pas suspendues
+  // quand l'onglet DeepSeek passe en arriere-plan. Si le setInterval
+  // est throttle, l'alarme relance un poll toutes les 30 s.
+  try {
+    browser.alarms.create("nemapi-poll-watchdog", { periodInMinutes: 0.5 });
+    if (!startPolling._alarmBound) {
+      startPolling._alarmBound = true;
+      browser.alarms.onAlarm.addListener((alarm) => {
+        if (alarm.name !== "nemapi-poll-watchdog") return;
+        if (!pollTimer) return;
+        poll().catch(() => {});
+      });
+    }
+  } catch (e) {
+    console.warn("[NEMAPI] alarms indisponible :", e);
+  }
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+  connected = false;
+}
+
+// ═══════════════════════════════════════════
+// Content script
+// ═══════════════════════════════════════════
+
+async function pingContentScript(tabId) {
+  try {
+    const resp = await browser.tabs.sendMessage(tabId, { action: "ping" });
+    return !!(resp && resp.pong);
+  } catch (e) {
+    return false;
+  }
+}
+
+async function ensureContentScript(tabId, attempts = 4) {
+  for (let i = 0; i < attempts; i++) {
+    if (await pingContentScript(tabId)) return true;
+    try {
+      await browser.scripting.executeScript({
+        target: { tabId },
+        files: ["content.js"],
+      });
+    } catch (e) {
+      if (
+        String(e.message || e).includes("Missing host permission") ||
+        String(e.message || e).includes("Cannot access")
+      ) {
+        return false;
+      }
+    }
+    await new Promise((r) => setTimeout(r, 350 + i * 150));
+  }
+  return await pingContentScript(tabId);
+}
+
+async function sendToTab(tabId, message, retries = 3) {
+  let lastErr = null;
+  for (let i = 0; i < retries; i++) {
+    const ready = await ensureContentScript(tabId);
+    if (!ready) {
+      lastErr = new Error(
+        "Content script absent. Rechargez DeepSeek et recapturez l'onglet."
+      );
+      await new Promise((r) => setTimeout(r, 300));
+      continue;
+    }
+    try {
+      return await browser.tabs.sendMessage(tabId, message);
+    } catch (e) {
+      lastErr = e;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  }
+  throw lastErr || new Error("sendMessage failed");
+}
+
+// ═══════════════════════════════════════════
+// Jobs
+// ═══════════════════════════════════════════
+
+async function executeJob(msg) {
+  const jobId = msg.jobId;
+  const text = msg.text || msg.question || "";
+  const meta = msg.meta || {};
+
+  if (!targetTabId) {
+    await postResult(
+      jobId,
+      "error",
+      "Aucun onglet cible. Panneau NEMAPI → Capturer cet onglet (DeepSeek)."
+    );
+    return;
+  }
+
+  jobInFlight = true;
+  jobInFlightSince = Date.now();
+  jobInFlightId = jobId;
+  try {
+    try {
+      await browser.tabs.get(targetTabId);
+    } catch (e) {
+      await postResult(jobId, "error", "Onglet cible fermé — recapturez.");
+      targetTabId = null;
+      jobInFlight = false;
+      jobInFlightSince = 0;
+      jobInFlightId = null;
+      return;
+    }
+
+    try {
+      await browser.tabs.update(targetTabId, { active: true });
+    } catch (e) {}
+    await new Promise((r) => setTimeout(r, 250));
+
+    const ready = await ensureContentScript(targetTabId);
+    if (!ready) {
+      await postResult(
+        jobId,
+        "error",
+        "Content script non chargé. F5 DeepSeek, recapturez l'onglet."
+      );
+      jobInFlight = false;
+      jobInFlightSince = 0;
+      jobInFlightId = null;
+      return;
+    }
+
+    // Débloquer UI si l'utilisateur a cliqué dans DeepSeek (menus, busy fantôme)
+    let forceJob = false;
+    try {
+      const ping = await sendToTab(targetTabId, { action: "ping" });
+      if (ping && ping.busy && (ping.busyAgeMs || 0) > 45000) {
+        console.log("[NEMAPI] Content busy stale — forceUnlock");
+        await sendToTab(targetTabId, {
+          action: "forceUnlock",
+          reason: "stale-before-job",
+        });
+        forceJob = true;
+        await new Promise((r) => setTimeout(r, 500));
+      } else {
+        await sendToTab(targetTabId, { action: "prepareUi", forceStop: false });
+      }
+    } catch (e) {
+      console.warn("[NEMAPI] prepareUi", e);
+      forceJob = true; // content peut être dans un état bizarre après clic
+    }
+
+    await sendToTab(targetTabId, {
+      action: "runJob",
+      jobId,
+      text,
+      question: text,
+      mode: "send",
+      meta,
+      files: meta.files || [],
+      upload_only: !!(meta.upload_only || meta.uploadOnly),
+      force: forceJob,
+    });
+
+    console.log("[NEMAPI] Job lancé send", jobId);
+    // jobInFlight reste true jusqu'à automationResult/Error
+  } catch (error) {
+    jobInFlight = false;
+    jobInFlightSince = 0;
+    jobInFlightId = null;
+    const msgText = (error && error.message) || String(error);
+    const friendly = msgText.includes("Receiving end does not exist")
+      ? "Content script mort — F5 DeepSeek, recharger extension, recapturer."
+      : msgText;
+    await postResult(jobId, "error", friendly);
+  }
+}
+
+async function postResult(jobId, action, data) {
+  try {
+    const payload = { jobId, action };
+    if (action === "result") payload.result = data == null ? "" : String(data);
+    else payload.error = data == null ? "" : String(data);
+
+    await fetch(PROXY_URL + "/job", {
+      method: "POST",
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+      body: JSON.stringify(payload),
+    });
+  } catch (e) {
+    console.error("[NEMAPI] postResult", e);
+  }
+}
+
+// ═══════════════════════════════════════════
+// Floating panel
+// ═══════════════════════════════════════════
+
+async function openFloatingPanel() {
+  if (floatingWindowId) {
+    try {
+      await browser.windows.get(floatingWindowId);
+      await browser.windows.update(floatingWindowId, { focused: true });
+      return;
+    } catch (e) {
+      floatingWindowId = null;
+    }
+  }
+  const win = await browser.windows.create({
+    url: browser.runtime.getURL("floating.html"),
+    type: "popup",
+    width: 380,
+    height: 480,
+  });
+  floatingWindowId = win.id;
+}
+
+// ═══════════════════════════════════════════
+// Messages
+// ═══════════════════════════════════════════
+
+browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  (async () => {
+    if (message.action === "captureTab") {
+      const allTabs = await browser.tabs.query({});
+      let tab =
+        allTabs.find((t) => t.url && t.url.includes("deepseek.com")) || null;
+      if (!tab) {
+        const active = await browser.tabs.query({
+          active: true,
+          currentWindow: true,
+        });
+        tab = active[0] || null;
+      }
+      if (!tab) {
+        sendResponse({ ok: false, error: "Aucun onglet" });
+        return;
+      }
+      targetTabId = tab.id;
+      await ensureContentScript(targetTabId);
+      sendResponse({
+        ok: true,
+        tabId: targetTabId,
+        title: tab.title,
+        url: tab.url,
+      });
+      return;
+    }
+
+    if (message.action === "startPolling") {
+      await startPolling();
+      sendResponse({ ok: true, connected });
+      return;
+    }
+    if (message.action === "stopPolling") {
+      stopPolling();
+      sendResponse({ ok: true });
+      return;
+    }
+    if (message.action === "getStatus") {
+      sendResponse({
+        connected,
+        targetTabId,
+        polling: !!pollTimer,
+      });
+      return;
+    }
+    if (message.action === "automationResult") {
+      jobInFlight = false;
+      jobInFlightSince = 0;
+      jobInFlightId = null;
+      await postResult(message.jobId, "result", message.result);
+      sendResponse({ ok: true });
+      return;
+    }
+    if (message.action === "automationError") {
+      jobInFlight = false;
+      jobInFlightSince = 0;
+      jobInFlightId = null;
+      await postResult(message.jobId, "error", message.error);
+      sendResponse({ ok: true });
+      return;
+    }
+    if (message.action === "automationStopped") {
+      jobInFlight = false;
+      jobInFlightSince = 0;
+      jobInFlightId = null;
+      await postResult(message.jobId, "stopped", "ANNULÉ");
+      sendResponse({ ok: true });
+      return;
+    }
+    if (message.action === "resetSession") {
+      try {
+        await fetch(PROXY_URL + "/v1/sessions/reset", { method: "POST" });
+        sendResponse({ ok: true });
+      } catch (e) {
+        sendResponse({ ok: false, error: String(e) });
+      }
+      return;
+    }
+    if (message.action === "probeDom") {
+      if (!targetTabId) {
+        sendResponse({ ok: false, error: "Pas d'onglet" });
+        return;
+      }
+      try {
+        const r = await sendToTab(targetTabId, { action: "probeDom" });
+        sendResponse({ ok: true, probe: r });
+      } catch (e) {
+        sendResponse({ ok: false, error: String(e) });
+      }
+      return;
+    }
+    if (message.from === "logger") {
+      sendResponse({ ok: true });
+      return;
+    }
+  })();
+  return true;
+});
+
+browser.action.onClicked.addListener(() => {
+  openFloatingPanel();
+});
+
+console.log("[NEMAPI] Background v2.7 (UI recovery + job watchdog + files)");

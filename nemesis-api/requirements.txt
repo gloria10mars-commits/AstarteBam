@@ -1,0 +1,9 @@
+# NEMESIS API v1.5.2 - Dependances
+# Toutes les versions ci-dessous ont des wheels 32-bit (i386, armhf)
+# disponibles sur PyPI, donc installation sans compilation requise.
+# En cas de wheel 32-bit manquante, pip compilera depuis la source
+# (gcc + python3-dev requis dans ce cas).
+
+flask==3.0.0
+flask-cors==4.0.0
+requests==2.31.0

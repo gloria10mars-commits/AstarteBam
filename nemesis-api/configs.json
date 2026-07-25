@@ -1,0 +1,47 @@
+{
+  "chat_deepseek_com": {
+    "input_click": [
+      402,
+      526
+    ],
+    "send_click": [
+      1129,
+      589
+    ],
+    "copy_zone": [
+      401,
+      440
+    ],
+    "wait_time": 8
+  },
+  "www_kimi_com": {
+    "input_click": [
+      286,
+      531
+    ],
+    "send_click": [
+      994,
+      603
+    ],
+    "copy_zone": [
+      313,
+      439
+    ],
+    "wait_time": 8
+  },
+  "chat_qwen_ai": {
+    "input_click": [
+      424,
+      565
+    ],
+    "send_click": [
+      1136,
+      561
+    ],
+    "copy_zone": [
+      371,
+      432
+    ],
+    "wait_time": 8
+  }
+}

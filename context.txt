@@ -1,0 +1,1545 @@
+## User
+
+J'ai une tache importante a te confier . Actuellement tu tournes dans un environnement proot distro linux et tu dois travailler sur un serveur qui se trouve sur mon rseau local je vais te donner ces informations et tu utiliseras sshpass ou autres pour t'y connecter et travailler .l'ip du serveur est 192.168.1.81 le nom du serveur est leon et son mot de passe est mazedxn7. Voici le chemin du projet a modifier sur le serveur /home/leon/AstarteBam . c'est un agent IA cli qui utilise des api standard comme modles(groq nvidia et autres) maintenant je suis en train de developper d'autres projets d'api de reverse engeeneering nottament une pour deepseek  /home/leon/Deepseek_API_bridge  et gemini /home/leon/Gemini-Chat-API; Mais actuellement les deux api sont pas encore stable . Donc analyse le code de chacun avec l'ui du provider reverser et en fonction de a modifie leur  codes pourqu'il soient fonctionneles et operationnel d'un coup en mme temps  bref qu'ils fonctionnent .Aprs cela si les deux api fonctionnent tu dois les integrer  l'agent cli AstarteBam(lui aussi modifie le enventuellement pour que tout soient propre et fonctionnele) pour qu'il puissent l'utiliser comme provider . Bref donc c'est a. etablit la connexion ssh avec le serveur et analyse les projets avant de commencer les modifs .   
+
+## Assistant
+
+Je commence par établir la connexion SSH au serveur et analyser la structure des trois projets avant toute modification.
+
+## Tools
+
+- Execute: which sshpass ssh 2>/dev/null; sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 leon@192.168.1.81 'hostname && whoami && ls -la /home/leon/ | head -50' (SSH connect and list home projects)
+
+## Assistant
+
+Connexion SSH OK. J’explore en parallèle la structure des trois projets.
+
+## Tools
+
+- Execute: sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 'echo "=== Deepseek_API_bridge ===" && find /home/leon/Deepseek_API_bridge -type f \( -name "*.py" -o -name "*.js" -o -name "*.ts" -o -name "*.json" -o -name "*.md" -o -name "*.toml" -o -name "*.yml" -o -name "*.yaml" -o -name "*.env*" -o -name "requirements*" -o -name "package*" -o -name "Dockerfile*" -o -name "Makefile" \) 2>/dev/null | head -80 && echo && echo "=== Gemini-Chat-API ===" && find /home/leon/Gemini-Chat-API -type f \( -name "*.py" -o -name "*.js" -o -name "*.ts" -o -name "*.json" -o -name "*.md" -o -name "*.toml" -o -name "*.yml" -o -name "*.yaml" -o -name "*.env*" -o -name "requirements*" -o -name "package*" -o -name "Dockerfile*" -o -name "Makefile" \) 2>/dev/null | head -80 && echo && echo "=== AstarteBam ===" && find /home/leon/AstarteBam -type f \( -name "*.py" -o -name "*.js" -o -name "*.ts" -o -name "*.json" -o -name "*.md" -o -name "*.toml" -o -name "*.yml" -o -name "*.yaml" -o -name "*.env*" -o -name "requirements*" -o -name "package*" -o -name "Dockerfile*" -o -name "Makefile" -o -name "Cargo.toml" -o -name "go.mod" \) 2>/dev/null | head -100' (List key files in all three projects)
+
+## Assistant
+
+Je lis les sources principales des trois projets (hors venv).
+
+## Tools
+
+- Execute: sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 'echo "===== ASTARTBAM =====" && ls -la /home/leon/AstarteBam/ && echo && for f in README.md .env.example core/providers.py core/router.py core/orchestrator.py cli.py modules/gemini.py modules/nemapi.py; do echo "======== FILE: $f ========"; cat "/home/leon/AstarteBam/$f" 2>/dev/null | head -500; echo; done' (Read AstarteBam core provider files)
+- Execute: sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 'echo "===== GEMINI =====" && ls -la /home/leon/Gemini-Chat-API/ && for f in README.md utilisation.md requirements.txt setup.py script_simple.py envoyer_prompt.py rafraichir_cookies.py mon_chat.py gemini.js gemini_client/__init__.py gemini_client/core.py gemini_client/constants.py gemini_client/cookie_manager.py gemini_client/enums.py gemini_client/utils.py gemini_client/images.py; do echo "======== FILE: $f ========"; cat "/home/leon/Gemini-Chat-API/$f" 2>/dev/null | head -400; echo; done' (Read Gemini Chat API source files)
+- Execute: sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 'echo "===== DEEPSEEK =====" && ls -la /home/leon/Deepseek_API_bridge/ && ls -la /home/leon/Deepseek_API_bridge/extension/ && echo && for f in proxy.py bridge_client.py extension/manifest.json extension/background.js extension/content.js extension/floating.js; do echo "======== FILE: $f ========"; cat "/home/leon/Deepseek_API_bridge/$f"; echo; done' (Read Deepseek API bridge source files)
+
+## Assistant
+
+Je poursuis l’analyse des cœurs des APIs et du système de providers d’AstarteBam.
+
+## Tools
+
+- Execute: sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 'cat /home/leon/Gemini-Chat-API/gemini_client/core.py' (Read Gemini core.py full)
+- Execute: sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 'wc -l /home/leon/Deepseek_API_bridge/proxy_openai.py /home/leon/Deepseek_API_bridge/openai_chat.py /home/leon/Gemini-Chat-API/gemini_client/core.py /home/leon/Gemini-Chat-API/gemini_client/enums.py /home/leon/AstarteBam/core/providers.py /home/leon/AstarteBam/server.py; echo; echo "===== providers.py ====="; cat /home/leon/AstarteBam/core/providers.py; echo; echo "===== STATUT gemini ====="; cat /home/leon/Gemini-Chat-API/STATUT.txt; echo; echo "===== NEMESIS.md ====="; cat /home/leon/Deepseek_API_bridge/NEMESIS.md; echo; echo "===== README deepseek ====="; cat /home/leon/Deepseek_API_bridge/README.md' (Read providers and project status docs)
+- Execute: sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 'cat /home/leon/Gemini-Chat-API/gemini_client/enums.py; echo "====="; cat /home/leon/Gemini-Chat-API/gemini_client/constants.py; echo "====="; cat /home/leon/Gemini-Chat-API/gemini_client/__init__.py; echo "====="; cat /home/leon/Gemini-Chat-API/gemini_client/cookie_manager.py; echo "====="; cat /home/leon/Gemini-Chat-API/STATUT.txt; echo "====="; cat /home/leon/Gemini-Chat-API/cookies_fixed.json; echo "====="; cat /home/leon/Gemini-Chat-API/gemini_client/cookies.json 2>/dev/null; echo; ls -la /home/leon/AstarteBam/.secrets/; cat /home/leon/AstarteBam/.env' (Read Gemini enums cookies and Astarte env)
+
+## Assistant
+
+J’ai identifié le bug de troncature Gemini et l’architecture DeepSeek. Je lis le parsing streaming et je teste les deux APIs.
+
+## Tools
+
+- Execute: sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 'sed -n "200,450p" /home/leon/Gemini-Chat-API/gemini_client/core.py' (Read Gemini ask() and stream parse)
+- Execute: sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 'head -200 /home/leon/Deepseek_API_bridge/proxy_openai.py; echo "====="; sed -n "200,500p" /home/leon/Deepseek_API_bridge/proxy_openai.py; echo "====="; ss -tlnp 2>/dev/null | grep -E "8080|8765|8766" || netstat -tlnp 2>/dev/null | grep -E "8080|8765"; ps aux | grep -E "proxy|gemini|astarte|server.py" | grep -v grep' (Read DeepSeek proxy start and check ports)
+- Execute: sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 'cd /home/leon/Gemini-Chat-API && python3 -c "
+import sys
+sys.path.insert(0,\".\")
+from gemini_client import Chatbot, Model
+print(\"Models:\", [m.model_name for m in Model])
+try:
+    bot = Chatbot(cookie_path=\"cookies_fixed.json\", model=Model.G_2_5_FLASH, timeout=60)
+    r = bot.ask(\"Dis bonjour en une phrase complete de plus de 20 mots sur la programmation.\")
+    print(\"ERROR:\", r.get(\"error\"))
+    c = r.get(\"content\",\"\")
+    text = \"\".join(c) if isinstance(c,list) else str(c)
+    print(\"LEN:\", len(text))
+    print(\"CONTENT:\", text[:500])
+except Exception as e:
+    print(\"EXCEPTION:\", type(e).__name__, e)
+" 2>&1' (Test Gemini API with existing cookies)
+
+## Assistant
+
+Les cookies Gemini semblent expirés et le proxy DeepSeek n’écoute pas. Je corrige le parsing et je tente de récupérer des cookies frais.
+
+## Tools
+
+- Execute: sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 'sed -n "350,520p" /home/leon/Gemini-Chat-API/gemini_client/core.py; echo "===== RAW PAGE TEST ====="; cd /home/leon/Gemini-Chat-API && python3 -c "
+from curl_cffi.requests import Session
+import json, re
+cookies=json.load(open(\"cookies_fixed.json\"))
+cd={c[\"name\"]:c[\"value\"] for c in cookies}
+s=Session(impersonate=\"chrome120\")
+r=s.get(\"https://gemini.google.com/app\", cookies=cd, timeout=30)
+print(\"status\", r.status_code, \"url\", r.url)
+print(\"len\", len(r.text))
+print(\"sign in\", \"Sign in\" in r.text or \"accounts.google\" in str(r.url))
+for pat in [r\"SNlM0e\", r\"SNlM0e\\\\\":\\\\\"\", r\"\\\"SNlM0e\\\"\", r\"cfb2h\", r\"FdrFJe\", r\"WIZ_global_data\"]:
+    m=re.search(pat, r.text)
+    print(\"pat\", pat, \"found\", bool(m))
+# try extract candidates
+for pat in [r\"[\\\"\\']SNlM0e[\\\"\\']\\s*:\\s*[\\\"\\']([^\\\"\\']+)[\\\"\\']\", r\"SNlM0e\\\\u003d([^\\\\]+)\", r\"\\\"SNlM0e\\\":\\\"([^\"]+)\\\"\"]:
+    m=re.search(pat, r.text)
+    if m: print(\"MATCH\", pat, m.group(1)[:40])
+print(r.text[r.text.find(\"SNlM0e\")-20:r.text.find(\"SNlM0e\")+80] if \"SNlM0e\" in r.text else \"no SNlM0e substring\")
+print(\"sample\", r.text[:300].replace(chr(10),\" \"))
+" 2>&1' (Debug Gemini SNlM0e extraction)
+- Execute: sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 'grep -n "findMainComposer\|isGenerating\|ds-message\|chat-input\|textarea\|contenteditable\|waitForAssistant\|actionSend\|findSendNear" /home/leon/Deepseek_API_bridge/extension/content.js | head -80; echo "====="; sed -n "1,120p" /home/leon/Deepseek_API_bridge/extension/content.js; echo "====="; # check if firefox has deepseek open; DISPLAY=:0 xdotool search --name DeepSeek 2>/dev/null; DISPLAY=:0 xdotool search --name firefox 2>/dev/null | head -5; ps aux | grep -i firefox | grep -v grep | head -5' (Inspect DeepSeek DOM selectors and Firefox)
+- Execute: sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 'cd /home/leon/Gemini-Chat-API && python3 -c "
+from gemini_client.cookie_manager import CookieExtractor
+try:
+    c = CookieExtractor().extract_cookies(save_to_disk=False)
+    print(\"OK keys:\", list(c.keys()))
+    for k,v in c.items():
+        print(k, \"=\", (v[:40]+\"...\") if len(v)>40 else v)
+except Exception as e:
+    print(\"EXTRACT FAIL:\", type(e).__name__, e)
+" 2>&1; echo "====="; ls -la ~/.mozilla/firefox/ 2>/dev/null | head -20; ls -la ~/.config/google-chrome/ 2>/dev/null | head -5; ls -la ~/.config/chromium/ 2>/dev/null | head -5; which firefox chromium-browser google-chrome 2>/dev/null; pip3 show curl_cffi browser_cookie3 2>/dev/null | grep -E "Name|Version"' (Extract browser cookies and check browsers)
+
+## Assistant
+
+Des cookies frais sont disponibles dans Firefox. Je les teste et j’analyse le format de réponse actuel de Gemini.
+
+## Tools
+
+- Execute: sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 'cat > /tmp/test_gemini_debug.py << "PYEOF"
+#!/usr/bin/env python3
+import json, re, sys
+sys.path.insert(0, "/home/leon/Gemini-Chat-API")
+from gemini_client.cookie_manager import CookieExtractor
+from curl_cffi.requests import Session
+
+# Fresh cookies from browser
+cookies = CookieExtractor().extract_cookies(save_to_disk=True, filename="/tmp/gemini_fresh.json")
+# Fix path - cookie manager saves relative to package
+from pathlib import Path
+# extract again with proper save
+extractor = CookieExtractor()
+cookies = extractor.extract_cookies(save_to_disk=False)
+print("cookies:", {k: v[:30]+"..." for k,v in cookies.items()})
+
+# Save properly
+payload = [{"name": k, "value": v} for k,v in cookies.items()]
+for path in [
+    "/home/leon/Gemini-Chat-API/cookies_fixed.json",
+    "/home/leon/Gemini-Chat-API/gemini_client/cookies.json",
+    "/home/leon/AstarteBam/.secrets/gemini_slot_1.json",
+]:
+    with open(path, "w") as f:
+        json.dump(payload, f, indent=2)
+    print("saved", path)
+
+cd = cookies
+s = Session(impersonate="chrome120")
+r = s.get("https://gemini.google.com/app", cookies=cd, timeout=45)
+print("status", r.status_code, "final_url", r.url)
+print("len", len(r.text))
+print("has Sign in", "Sign in" in r.text)
+print("has SNlM0e", "SNlM0e" in r.text)
+print("has cfb2h", "cfb2h" in r.text)
+print("has FdrFJe", "FdrFJe" in r.text)
+
+# Find SNlM0e patterns
+patterns = [
+    r'["\']SNlM0e["\']\s*:\s*["\'](.*?)["\']',
+    r'SNlM0e\\":\\"(.*?)\\"',
+    r'"SNlM0e":"(.*?)"',
+    r"SNlM0e\\u003d([^\\&\"']+)",
+    r"SNlM0e['\"]?\s*[:=]\s*['\"]([^'\"]+)",
+]
+for p in patterns:
+    m = re.search(p, r.text)
+    print("pattern", p[:40], "->", (m.group(1)[:50] if m else None))
+
+# dump nearby context if any
+idx = r.text.find("SNlM0e")
+if idx >= 0:
+    print("CONTEXT:", repr(r.text[max(0,idx-30):idx+100]))
+else:
+    # search for common tokens
+    for tok in ["AF_initDataCallback", "WIZ_global_data", "at=", "bl=", "BardChatUi"]:
+        print(tok, "->", tok in r.text)
+    # write sample for analysis
+    with open("/tmp/gemini_page.html", "w") as f:
+        f.write(r.text)
+    print("wrote /tmp/gemini_page.html")
+    # look for script blobs
+    for m in re.finditer(r'window\.\w+\s*=\s*\{[^}]{0,200}', r.text[:50000]):
+        print("win", m.group(0)[:120])
+PYEOF
+python3 /tmp/test_gemini_debug.py 2>&1' (Debug Gemini with fresh browser cookies)
+- Execute: cat > /tmp/test_gemini_debug.py << 'PYEOF'
+#!/usr/bin/env python3
+import json, re, sys
+sys.path.insert(0, "/home/leon/Gemini-Chat-API")
+from gemini_client.cookie_manager import CookieExtractor
+from curl_cffi.requests import Session
+
+extractor = CookieExtractor()
+cookies = extractor.extract_cookies(save_to_disk=False)
+print("cookies:", {k: v[:30]+"..." for k,v in cookies.items()})
+
+payload = [{"name": k, "value": v} for k,v in cookies.items()]
+for path in [
+    "/home/leon/Gemini-Chat-API/cookies_fixed.json",
+    "/home/leon/Gemini-Chat-API/gemini_client/cookies.json",
+    "/home/leon/AstarteBam/.secrets/gemini_slot_1.json",
+]:
+    with open(path, "w") as f:
+        json.dump(payload, f, indent=2)
+    print("saved", path)
+
+s = Session(impersonate="chrome120")
+r = s.get("https://gemini.google.com/app", cookies=cookies, timeout=45)
+print("status", r.status_code, "final_url", r.url)
+print("len", len(r.text))
+print("has Sign in", "Sign in" in r.text)
+print("has SNlM0e", "SNlM0e" in r.text)
+print("has cfb2h", "cfb2h" in r.text)
+print("has FdrFJe", "FdrFJe" in r.text)
+
+patterns = [
+    r"""["']SNlM0e["']\s*:\s*["'](.*?)["']""",
+    r'"SNlM0e":"(.*?)"',
+    r"SNlM0e\\u003d([^\\&\"']+)",
+    r"SNlM0e['\"]?\s*[:=]\s*['\"]([^'\"]+)",
+]
+for p in patterns:
+    m = re.search(p, r.text)
+    print("pattern ok ->", (m.group(1)[:50] if m else None))
+
+idx = r.text.find("SNlM0e")
+if idx >= 0:
+    print("CONTEXT:", repr(r.text[max(0,idx-30):idx+100]))
+else:
+    for tok in ["AF_initDataCallback", "WIZ_global_data", "at=", "bl=", "BardChatUi", "accounts.google"]:
+        print(tok, "->", tok in r.text)
+    with open("/tmp/gemini_page.html", "w") as f:
+        f.write(r.text)
+    print("wrote /tmp/gemini_page.html")
+PYEOF
+sshpass -p 'mazedxn7' scp -o StrictHostKeyChecking=no /tmp/test_gemini_debug.py leon@192.168.1.81:/tmp/test_gemini_debug.py
+sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 'python3 /tmp/test_gemini_debug.py 2>&1' (Upload and run Gemini cookie debug script)
+
+## Assistant
+
+Cookies valides et SNlM0e OK. Je teste le chat complet et j’analyse le bug de troncature.
+
+## Tools
+
+- Execute: cat > /tmp/test_gemini_ask.py << 'PYEOF'
+#!/usr/bin/env python3
+import json, sys, re
+sys.path.insert(0, "/home/leon/Gemini-Chat-API")
+from gemini_client import Chatbot, Model
+from curl_cffi.requests import Session
+from gemini_client.utils import load_cookies
+
+# Direct raw request to inspect stream format
+secure_1psid, secure_1psidts = load_cookies("/home/leon/Gemini-Chat-API/cookies_fixed.json")
+s = Session(impersonate="chrome120", cookies={
+    "__Secure-1PSID": secure_1psid,
+    "__Secure-1PSIDTS": secure_1psidts,
+})
+r = s.get("https://gemini.google.com/app", timeout=45)
+m = re.search(r'["\']SNlM0e["\']\s*:\s*["\'](.*?)["\']', r.text)
+snl = m.group(1)
+print("SNlM0e", snl[:40])
+
+import random, string
+reqid = "".join(random.choices(string.digits, k=7))
+message = "Ecris un paragraphe de 5 phrases sur Python."
+message_struct = [[message], None, ["", "", ""]]
+data = {
+    "f.req": json.dumps([None, json.dumps(message_struct, ensure_ascii=False)], ensure_ascii=False),
+    "at": snl,
+}
+params = {
+    "bl": "boq_assistant-bard-web-server_20240625.13_p0",
+    "_reqid": reqid,
+    "rt": "c",
+}
+headers = {
+    "Content-Type": "application/x-www-form-urlencoded;charset=utf-8",
+    "Origin": "https://gemini.google.com",
+    "Referer": "https://gemini.google.com/",
+    "X-Same-Domain": "1",
+}
+# try with model header for flash
+headers["x-goog-ext-525001261-jspb"] = '[1,null,null,null,"35609594dbe934d8"]'
+
+resp = s.post(
+    "https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate",
+    params=params, data=data, headers=headers, timeout=90,
+)
+print("post status", resp.status_code, "len", len(resp.text))
+with open("/tmp/gemini_raw_response.txt", "w") as f:
+    f.write(resp.text)
+print("wrote raw response")
+
+lines = resp.text.splitlines()
+print("num lines", len(lines))
+for i, line in enumerate(lines[:30]):
+    print(f"L{i} len={len(line)} start={line[:120]!r}")
+
+# Parse all wrb.fr chunks and extract content lengths
+contents = []
+for i, line in enumerate(lines):
+    if not line or line.startswith(")]}'"):
+        continue
+    if line.startswith(")]}"):
+        line = line[4:].strip()
+    if not line.startswith("["):
+        continue
+    try:
+        arr = json.loads(line)
+    except Exception:
+        continue
+    for part in arr:
+        if isinstance(part, list) and len(part) > 2 and part[0] == "wrb.fr":
+            inner = part[2]
+            if not isinstance(inner, str):
+                continue
+            try:
+                main = json.loads(inner)
+            except Exception:
+                continue
+            # try extract choices content
+            try:
+                if main and len(main) > 4 and main[4]:
+                    for cand in main[4]:
+                        if len(cand) > 1 and isinstance(cand[1], list) and cand[1]:
+                            c = cand[1][0]
+                            contents.append((i, len(str(c)), str(c)[:100]))
+            except Exception as e:
+                pass
+            # also dump structure briefly
+            def shape(x, d=0):
+                if d>3: return "..."
+                if isinstance(x, list):
+                    return f"list[{len(x)}]" + (f"->{shape(x[0],d+1)}" if x else "")
+                if isinstance(x, dict):
+                    return f"dict{list(x.keys())[:5]}"
+                return type(x).__name__
+            print(f"  wrb line{i} shape={shape(main)} main_len={len(main) if isinstance(main,list) else '?'}")
+
+print("CONTENTS FOUND:")
+for c in contents:
+    print(c)
+
+print("\n=== via Chatbot.ask ===")
+bot = Chatbot(cookie_path="/home/leon/Gemini-Chat-API/cookies_fixed.json", model=Model.G_2_5_FLASH, timeout=90)
+r = bot.ask("Ecris un paragraphe de 5 phrases sur Python.")
+print("error", r.get("error"))
+c = r.get("content","")
+text = "".join(c) if isinstance(c, list) else str(c)
+print("LEN", len(text))
+print("TEXT", text)
+PYEOF
+sshpass -p 'mazedxn7' scp -o StrictHostKeyChecking=no /tmp/test_gemini_ask.py leon@192.168.1.81:/tmp/test_gemini_ask.py
+sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 'python3 /tmp/test_gemini_ask.py 2>&1' (Test Gemini raw stream and Chatbot.ask)
+
+## Assistant
+
+Confirmé : le parser Gemini prend le premier chunk au lieu du plus long. Je corrige ça et je m’occupe de DeepSeek.
+
+## Tools
+
+- Execute: sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 'sed -n "350,651p" /home/leon/Gemini-Chat-API/gemini_client/core.py' > /tmp/gemini_core_ask.py
+wc -l /tmp/gemini_core_ask.py
+# get full core for editing
+sshpass -p 'mazedxn7' scp -o StrictHostKeyChecking=no leon@192.168.1.81:/home/leon/Gemini-Chat-API/gemini_client/core.py /tmp/gemini_core.py
+sshpass -p 'mazedxn7' scp -o StrictHostKeyChecking=no leon@192.168.1.81:/home/leon/Deepseek_API_bridge/proxy_openai.py /tmp/proxy_openai.py
+wc -l /tmp/gemini_core.py /tmp/proxy_openai.py
+# rest of proxy http handlers
+sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 'sed -n "500,900p" /home/leon/Deepseek_API_bridge/proxy_openai.py' | head -400
+# check if deepseek tab / firefox extension state
+sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 'ps aux | grep -iE "firefox|deepseek" | grep -v grep; ls /home/leon/.mozilla/firefox/*.default*/extensions/ 2>/dev/null | head -20; cat /home/leon/Deepseek_API_bridge/requirements.txt' (Fetch core files and check Firefox/DeepSeek)
+
+## Assistant
+
+Je corrige le parser de streaming Gemini et j’améliore la robustesse du client.
+
+## Tools
+
+- Read: /tmp/gemini_core.py (351-650)
+- Execute: cat > /tmp/fix_gemini_core.py << 'PYEOF'
+#!/usr/bin/env python3
+"""Patch Gemini-Chat-API core.py: fix streaming truncation + content type + robustness."""
+from pathlib import Path
+
+path = Path("/home/leon/Gemini-Chat-API/gemini_client/core.py")
+text = path.read_text(encoding="utf-8")
+
+# --- 1) Fix Chatbot __init__ to handle timeout=None and optional cookie_path ---
+old_init = '''    def __init__(
+        self,
+        cookie_path: str,
+        auto_cookie: bool = False,
+        proxy: Optional[Union[str, Dict[str, str]]] = None, # Allow string or dict proxy
+        timeout: int = 20,
+        model: Model = Model.UNSPECIFIED,
+        impersonate: str = "chrome110" # Added impersonate
+    ):
+        # Use asyncio.run() for cleaner async execution in sync context
+        # Handle potential RuntimeError if an event loop is already running
+        try:
+            self.loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self.loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self.loop)
+        if auto_cookie:
+            extractor = CookieExtractor()
+            cookie_data = extractor.extract_cookies(save_to_disk=False)
+            self.secure_1psid , self.secure_1psidts = cookie_data['__Secure-1PSID'], cookie_data['__Secure-1PSIDTS']
+        else:
+            self.secure_1psid, self.secure_1psidts = load_cookies(cookie_path)
+        self.async_chatbot = self.loop.run_until_complete(
+            AsyncChatbot.create(self.secure_1psid, self.secure_1psidts, proxy, timeout, model, impersonate) # Pass impersonate
+        )'''
+
+new_init = '''    def __init__(
+        self,
+        cookie_path: Optional[str] = None,
+        auto_cookie: bool = False,
+        proxy: Optional[Union[str, Dict[str, str]]] = None, # Allow string or dict proxy
+        timeout: Optional[int] = 120,
+        model: Model = Model.UNSPECIFIED,
+        impersonate: str = "chrome120" # Added impersonate
+    ):
+        # Use asyncio.run() for cleaner async execution in sync context
+        # Handle potential RuntimeError if an event loop is already running
+        try:
+            self.loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self.loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self.loop)
+        if auto_cookie:
+            extractor = CookieExtractor()
+            cookie_data = extractor.extract_cookies(save_to_disk=False)
+            # Support both naming conventions from browser_cookie3
+            self.secure_1psid = (
+                cookie_data.get("__Secure-1PSID")
+                or cookie_data.get("SECURE_1PSID")
+            )
+            self.secure_1psidts = (
+                cookie_data.get("__Secure-1PSIDTS")
+                or cookie_data.get("SECURE_1PSIDTS")
+            )
+            if not self.secure_1psid:
+                raise ValueError("auto_cookie: __Secure-1PSID introuvable dans le navigateur")
+        else:
+            if not cookie_path:
+                raise ValueError("cookie_path requis si auto_cookie=False")
+            self.secure_1psid, self.secure_1psidts = load_cookies(cookie_path)
+        # curl_cffi: None = no timeout; keep a sensible default for reverse API
+        if timeout is not None and timeout <= 0:
+            timeout = None
+        self.async_chatbot = self.loop.run_until_complete(
+            AsyncChatbot.create(self.secure_1psid, self.secure_1psidts, proxy, timeout, model, impersonate) # Pass impersonate
+        )'''
+
+if old_init not in text:
+    raise SystemExit("Chatbot.__init__ block not found")
+text = text.replace(old_init, new_init, 1)
+
+# --- 2) Fix AsyncChatbot defaults (timeout, impersonate) ---
+text = text.replace(
+    '        timeout: int = 20,\n        model: Model = Model.UNSPECIFIED,\n        impersonate: str = "chrome110", # Added impersonate\n    ):\n        headers = Headers.GEMINI.value.copy()',
+    '        timeout: Optional[int] = 120,\n        model: Model = Model.UNSPECIFIED,\n        impersonate: str = "chrome120", # Added impersonate\n    ):\n        headers = Headers.GEMINI.value.copy()',
+    1,
+)
+text = text.replace(
+    '        timeout: int = 20,\n        model: Model = Model.UNSPECIFIED,\n        impersonate: str = "chrome110", # Added impersonate\n    ) -> "AsyncChatbot":',
+    '        timeout: Optional[int] = 120,\n        model: Model = Model.UNSPECIFIED,\n        impersonate: str = "chrome120", # Added impersonate\n    ) -> "AsyncChatbot":',
+    1,
+)
+
+# --- 3) Replace ask() response parsing: take LONGEST stream chunk ---
+old_parse = '''            resp.raise_for_status()
+
+            # Process response - Google sends multiple lines, we need to find the one with content
+            lines = resp.text.splitlines()
+            if len(lines) < 3:
+                raise ValueError(f"Unexpected response format. Status: {resp.status_code}. Content: {resp.text[:200]}...")
+
+            # Parse all lines and find the one with the actual response content
+            body = None
+            body_index = 0
+            
+            for line in lines:
+                # Skip empty lines and the security prefix line
+                if not line or line == ")]}'":
+                    continue
+                    
+                # Remove the XSSI protection prefix if present
+                if line.startswith(")]}"):
+                    line = line[4:].strip()
+                
+                # Skip if not JSON
+                if not line.startswith("["):
+                    continue
+                
+                try:
+                    response_json = json.loads(line)
+                    
+                    # New Google API format: [["wrb.fr", null, "JSON_STRING"]]
+                    # The JSON_STRING contains: [null, [conversation_id, response_id], null, null, [[response_data]]]
+                    for part_index, part in enumerate(response_json):
+                        try:
+                            if isinstance(part, list) and len(part) > 2 and part[0] == "wrb.fr":
+                                # Parse the inner JSON string (at index 2)
+                                inner_json_str = part[2]
+                                if isinstance(inner_json_str, str):
+                                    main_part = json.loads(inner_json_str)
+                                    # Check if this has the response data at index 4
+                                    if main_part and len(main_part) > 4 and main_part[4]:
+                                        body = main_part
+                                        body_index = part_index
+                                        break
+                        except (IndexError, TypeError, json.JSONDecodeError):
+                            continue
+                    
+                    # If we found the body, stop searching
+                    if body:
+                        break
+                 
+                except json.JSONDecodeError:
+                    continue
+
+            if not body:
+                return {"content": "Failed to parse response body. No valid data found.", "error": True}
+
+            # Extract data from the response
+            try:
+                # Extract main content
+                content = ""
+                if len(body) > 4 and len(body[4]) > 0 and len(body[4][0]) > 1:
+                    # New format: body[4][0] = ["response_id", "content_text", ...]
+                    content = body[4][0][1]
+
+                # Extract conversation metadata
+                conversation_id = body[1][0] if len(body) > 1 and len(body[1]) > 0 else self.conversation_id
+                response_id = body[1][1] if len(body) > 1 and len(body[1]) > 1 else self.response_id
+
+                # Extract additional data
+                factualityQueries = body[3] if len(body) > 3 else None
+                textQuery = body[2][0] if len(body) > 2 and body[2] else ""
+
+                # Extract choices
+                choices = []
+                if len(body) > 4:
+                    for candidate in body[4]:
+                        if len(candidate) > 1 and isinstance(candidate[1], list) and len(candidate[1]) > 0:
+                            choices.append({"id": candidate[0], "content": candidate[1][0]})
+
+                choice_id = choices[0]["id"] if choices else self.choice_id'''
+
+new_parse = '''            resp.raise_for_status()
+
+            # Google stream = multiple progressive chunks (same answer grows over time).
+            # We MUST scan ALL chunks and keep the longest full content, not the first.
+            lines = resp.text.splitlines()
+            if len(lines) < 3:
+                raise ValueError(f"Unexpected response format. Status: {resp.status_code}. Content: {resp.text[:200]}...")
+
+            def _normalize_content(raw) -> str:
+                """body[4][0][1] is usually a list [text] or a plain string."""
+                if raw is None:
+                    return ""
+                if isinstance(raw, list):
+                    parts = []
+                    for item in raw:
+                        if isinstance(item, str):
+                            parts.append(item)
+                        elif isinstance(item, list):
+                            parts.append(_normalize_content(item))
+                        else:
+                            parts.append(str(item))
+                    return "".join(parts)
+                return str(raw)
+
+            def _content_len(raw) -> int:
+                return len(_normalize_content(raw))
+
+            candidates = []  # list of (content_len, body, response_json, part_index)
+            last_response_json = None
+
+            for line in lines:
+                if not line or line == ")]}'":
+                    continue
+                if line.startswith(")]}"):
+                    line = line[4:].strip()
+                # Chunked transfer sometimes prefixes a length digit line — skip non-JSON
+                if not line.startswith("["):
+                    continue
+                try:
+                    response_json = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                last_response_json = response_json
+                if not isinstance(response_json, list):
+                    continue
+                for part_index, part in enumerate(response_json):
+                    try:
+                        if not (isinstance(part, list) and len(part) > 2 and part[0] == "wrb.fr"):
+                            continue
+                        inner_json_str = part[2]
+                        if not isinstance(inner_json_str, str):
+                            continue
+                        main_part = json.loads(inner_json_str)
+                        if not (main_part and isinstance(main_part, list) and len(main_part) > 4 and main_part[4]):
+                            continue
+                        # Measure best candidate text length in this chunk
+                        best_len = 0
+                        try:
+                            for cand in main_part[4]:
+                                if isinstance(cand, list) and len(cand) > 1:
+                                    best_len = max(best_len, _content_len(cand[1]))
+                        except (IndexError, TypeError):
+                            pass
+                        candidates.append((best_len, main_part, response_json, part_index))
+                    except (IndexError, TypeError, json.JSONDecodeError):
+                        continue
+
+            if not candidates:
+                # Auth / empty / blocked response
+                snippet = (resp.text or "")[:300].replace("\\n", " ")
+                return {
+                    "content": f"Failed to parse response body. No valid data found. Snippet: {snippet}",
+                    "error": True,
+                }
+
+            # Prefer the chunk with the longest assistant text (final stream state)
+            candidates.sort(key=lambda x: x[0], reverse=True)
+            best_len, body, response_json, body_index = candidates[0]
+            if last_response_json is None:
+                response_json = response_json
+
+            # Extract data from the response
+            try:
+                # Extract main content from longest choice
+                content = ""
+                if len(body) > 4 and body[4]:
+                    best_choice = None
+                    best_choice_len = -1
+                    for cand in body[4]:
+                        if not isinstance(cand, list) or len(cand) < 2:
+                            continue
+                        clen = _content_len(cand[1])
+                        if clen > best_choice_len:
+                            best_choice_len = clen
+                            best_choice = cand
+                    if best_choice is not None:
+                        content = _normalize_content(best_choice[1])
+
+                # Extract conversation metadata
+                conversation_id = body[1][0] if len(body) > 1 and isinstance(body[1], list) and len(body[1]) > 0 else self.conversation_id
+                response_id = body[1][1] if len(body) > 1 and isinstance(body[1], list) and len(body[1]) > 1 else self.response_id
+
+                # Extract additional data
+                factualityQueries = body[3] if len(body) > 3 else None
+                textQuery = ""
+                try:
+                    if len(body) > 2 and body[2]:
+                        textQuery = body[2][0] if isinstance(body[2], list) else str(body[2])
+                except (IndexError, TypeError):
+                    textQuery = ""
+
+                # Extract choices
+                choices = []
+                if len(body) > 4 and body[4]:
+                    for candidate in body[4]:
+                        if isinstance(candidate, list) and len(candidate) > 1:
+                            choices.append({
+                                "id": candidate[0],
+                                "content": _normalize_content(candidate[1]),
+                            })
+
+                choice_id = choices[0]["id"] if choices else self.choice_id'''
+
+if old_parse not in text:
+    raise SystemExit("ask() parse block not found — file may have changed")
+text = text.replace(old_parse, new_parse, 1)
+
+# --- 4) Fix Format 3 bug that overwrites content with image field ---
+old_fmt3 = '''                # Format 3: Alternative location for generated images
+                if len(generated_images) == 0 and len(body) > 4 and len(body[4]) > 0:
+                    try:
+                        # Try to find images in candidate[4] structure
+                        candidate = body[4][0]
+                        if len(candidate) > 22 and candidate[22]:
+                            # Look for URLs in the candidate[22] field
+                            content = candidate[22][0] if isinstance(candidate[22], list) and len(candidate[22]) > 0 else str(candidate[22])
+                            urls = re.findall(r'https?://[^\\s]+', content)
+                            for i, url in enumerate(urls):
+                                # Clean up URL if it ends with punctuation
+                                if url[-1] in ['.', ',', ')', ']', '}', '"', "'"]:
+                                    url = url[:-1]
+                                generated_images.append({
+                                    "url": url,
+                                    "title": f"[Generated Image {i+1}]",
+                                    "alt": ""
+                                })
+                    except (IndexError, TypeError) as e:
+                        console.log(f"[yellow]Warning: Could not parse alternative image structure: {e}[/yellow]")
+
+                # Format 4: Look for image URLs in the text content
+                if len(images) == 0 and len(generated_images) == 0 and content:
+                    try:
+                        # Look for image URLs in the content - try multiple patterns
+
+                        # Pattern 1: Standard image URLs
+                        urls = re.findall(r'(https?://[^\\s]+\\.(jpg|jpeg|png|gif|webp))', content.lower())
+
+                        # Pattern 2: Google image URLs (which might not have extensions)
+                        google_urls = re.findall(r'(https?://lh\\d+\\.googleusercontent\\.com/[^\\s]+)', content)
+
+                        # Pattern 3: General URLs that might be images
+                        general_urls = re.findall(r'(https?://[^\\s]+)', content)'''
+
+new_fmt3 = '''                # Format 3: Alternative location for generated images
+                if len(generated_images) == 0 and len(body) > 4 and len(body[4]) > 0:
+                    try:
+                        # Try to find images in candidate[4] structure
+                        candidate = body[4][0]
+                        if len(candidate) > 22 and candidate[22]:
+                            # Look for URLs in the candidate[22] field (do NOT overwrite answer content)
+                            img_blob = candidate[22][0] if isinstance(candidate[22], list) and len(candidate[22]) > 0 else str(candidate[22])
+                            urls = re.findall(r'https?://[^\\s]+', str(img_blob))
+                            for i, url in enumerate(urls):
+                                # Clean up URL if it ends with punctuation
+                                if url[-1] in ['.', ',', ')', ']', '}', '"', "'"]:
+                                    url = url[:-1]
+                                generated_images.append({
+                                    "url": url,
+                                    "title": f"[Generated Image {i+1}]",
+                                    "alt": ""
+                                })
+                    except (IndexError, TypeError) as e:
+                        console.log(f"[yellow]Warning: Could not parse alternative image structure: {e}[/yellow]")
+
+                # Format 4: Look for image URLs in the text content
+                content_str = _normalize_content(content)
+                if len(images) == 0 and len(generated_images) == 0 and content_str:
+                    try:
+                        # Look for image URLs in the content - try multiple patterns
+                        content_l = content_str.lower()
+
+                        # Pattern 1: Standard image URLs
+                        urls = re.findall(r'(https?://[^\\s]+\\.(jpg|jpeg|png|gif|webp))', content_l)
+
+                        # Pattern 2: Google image URLs (which might not have extensions)
+                        google_urls = re.findall(r'(https?://lh\\d+\\.googleusercontent\\.com/[^\\s]+)', content_str)
+
+                        # Pattern 3: General URLs that might be images
+                        general_urls = re.findall(r'(https?://[^\\s]+)', content_str)'''
+
+if old_fmt3 not in text:
+    raise SystemExit("format3/4 block not found")
+text = text.replace(old_fmt3, new_fmt3, 1)
+
+# Ensure results always return plain string content
+old_results = '''                # Prepare results
+                results = {
+                    "content": content,
+                    "conversation_id": conversation_id,
+                    "response_id": response_id,
+                    "factualityQueries": factualityQueries,
+                    "textQuery": textQuery,
+                    "choices": choices,
+                    "images": all_images,
+                    "error": False,
+                }'''
+
+new_results = '''                # Prepare results — always expose plain text content
+                results = {
+                    "content": _normalize_content(content),
+                    "conversation_id": conversation_id,
+                    "response_id": response_id,
+                    "factualityQueries": factualityQueries,
+                    "textQuery": textQuery,
+                    "choices": choices,
+                    "images": all_images,
+                    "error": False,
+                }'''
+
+if old_results not in text:
+    raise SystemExit("results block not found")
+text = text.replace(old_results, new_results, 1)
+
+# Backup + write
+backup = path.with_suffix(".py.bak_streamfix")
+if not backup.exists():
+    backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+path.write_text(text, encoding="utf-8")
+print("OK patched", path)
+print("backup", backup)
+PYEOF
+sshpass -p 'mazedxn7' scp -o StrictHostKeyChecking=no /tmp/fix_gemini_core.py leon@192.168.1.81:/tmp/fix_gemini_core.py
+sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 'python3 /tmp/fix_gemini_core.py 2>&1' (Apply Gemini streaming fix patch on server)
+- Execute: # Start DeepSeek proxy and inspect remaining issues
+sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 '
+cd /home/leon/Deepseek_API_bridge
+# check if already running
+ss -tlnp | grep 8080 || true
+# start proxy in background if not running
+if ! ss -tlnp | grep -q 8080; then
+  if [ -d venv ]; then
+    nohup ./venv/bin/python proxy.py > /tmp/nemapi_proxy.log 2>&1 &
+  else
+    nohup python3 proxy.py > /tmp/nemapi_proxy.log 2>&1 &
+  fi
+  sleep 2
+fi
+ss -tlnp | grep 8080 || true
+echo "=== log ==="
+tail -30 /tmp/nemapi_proxy.log 2>/dev/null
+echo "=== health ==="
+curl -sS http://127.0.0.1:8080/v1/models 2>&1 | head -c 500; echo
+curl -sS http://127.0.0.1:8080/v1/session 2>&1 | head -c 500; echo
+curl -sS http://127.0.0.1:8080/job 2>&1 | head -c 300; echo
+' (Start DeepSeek NEMAPI proxy and healthcheck)
+- Execute: cat > /tmp/test_gemini_fixed.py << 'PYEOF'
+#!/usr/bin/env python3
+import sys
+sys.path.insert(0, "/home/leon/Gemini-Chat-API")
+# clear cached module
+for k in list(sys.modules):
+    if k.startswith("gemini_client"):
+        del sys.modules[k]
+from gemini_client import Chatbot, Model
+
+bot = Chatbot(cookie_path="/home/leon/Gemini-Chat-API/cookies_fixed.json", model=Model.G_2_5_FLASH, timeout=90)
+r = bot.ask("Ecris un paragraphe de 5 phrases sur Python.")
+print("error:", r.get("error"))
+c = r.get("content", "")
+text = "".join(c) if isinstance(c, list) else str(c)
+print("type:", type(c).__name__)
+print("LEN:", len(text))
+print("TEXT:", text)
+print("---")
+r2 = bot.ask("En une seule phrase: quelle est la capitale de la France?")
+c2 = r2.get("content", "")
+t2 = "".join(c2) if isinstance(c2, list) else str(c2)
+print("error2:", r2.get("error"), "LEN2:", len(t2))
+print("TEXT2:", t2)
+PYEOF
+sshpass -p 'mazedxn7' scp -o StrictHostKeyChecking=no /tmp/test_gemini_fixed.py leon@192.168.1.81:/tmp/test_gemini_fixed.py
+sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 'python3 /tmp/test_gemini_fixed.py 2>&1' (Test fixed Gemini full responses)
+
+## Assistant
+
+Gemini fonctionne (réponses complètes). Je répare le lancement du proxy DeepSeek.
+
+## Tools
+
+- Execute: sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 '
+ls -la /home/leon/Deepseek_API_bridge/venv/bin/ 2>&1 | head -30
+which python3
+python3 --version
+cd /home/leon/Deepseek_API_bridge
+# try run with system python
+python3 -c "import asyncio; print(\"ok\")"
+# start with python3
+nohup python3 proxy.py > /tmp/nemapi_proxy.log 2>&1 &
+echo PID:$!
+sleep 2
+cat /tmp/nemapi_proxy.log
+ss -tlnp | grep 8080 || true
+curl -sS http://127.0.0.1:8080/v1/models 2>&1 | head -c 800; echo
+' (Diagnose and start DeepSeek proxy with python3)
+- Execute: # Look for bugs in proxy chat completions path and content.js send issues
+sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 'sed -n "900,1300p" /home/leon/Deepseek_API_bridge/proxy_openai.py' (Read DeepSeek chat completions handler)
+- Execute: sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 '
+echo "=== firefox ==="
+ps aux | grep -i firefox | grep -v grep | head -5
+echo "=== DISPLAY ==="
+echo "DISPLAY=$DISPLAY"
+ls /tmp/.X11-unix/ 2>/dev/null
+echo "=== sessions ==="
+curl -sS http://127.0.0.1:8080/v1/session; echo
+# quick chat with short wait - use python timeout
+python3 - << "PY"
+import json, urllib.request, socket
+# create job via chat completions in a thread with short timeout
+req = urllib.request.Request(
+    "http://127.0.0.1:8080/v1/chat/completions",
+    data=json.dumps({
+        "model": "deepseek-web",
+        "messages": [{"role":"user","content":"Réponds uniquement: PONG"}]
+    }).encode(),
+    headers={"Content-Type":"application/json"},
+    method="POST",
+)
+try:
+    with urllib.request.urlopen(req, timeout=15) as r:
+        print("OK", r.read()[:500])
+except Exception as e:
+    print("ERR", type(e).__name__, e)
+# check if job is pending (extension not polling)
+import urllib.request as u
+print("job poll:", u.urlopen("http://127.0.0.1:8080/job", timeout=3).read().decode()[:300])
+PY
+tail -20 /tmp/nemapi_proxy.log
+' (Check extension connectivity for DeepSeek)
+
+## User
+
+continue
+
+## Tools
+
+- Execute: sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 '
+echo "=== firefox ==="
+ps aux | grep -i firefox | grep -v grep | head -8
+echo "=== proxy ==="
+ss -tlnp | grep 8080 || true
+curl -sS http://127.0.0.1:8080/v1/models; echo
+curl -sS http://127.0.0.1:8080/v1/session; echo
+echo "=== extensions installed ==="
+ls /home/leon/.mozilla/firefox/nm4ad5n5.default-esr/extensions/ 2>/dev/null
+ls /home/leon/Deepseek_API_bridge/extension/
+# check if temporary extension loaded via about:debugging - look for storage
+find /home/leon/.mozilla/firefox -name "*nemapi*" 2>/dev/null | head
+echo "=== log ==="
+tail -30 /tmp/nemapi_proxy.log 2>/dev/null
+echo "=== DISPLAY sessions ==="
+ls /tmp/.X11-unix/ 2>/dev/null
+who
+' (Check Firefox, proxy, extension state)
+
+## Assistant
+
+Gemini est OK ; le proxy DeepSeek tourne, mais Firefox et l’extension ne sont pas actifs. Je finalise DeepSeek, puis j’intègre les deux dans AstarteBam.
+
+## Tools
+
+- Execute: sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 '
+cat /home/leon/Deepseek_API_bridge/install.sh
+echo "====="
+# extension storage
+ls -la /home/leon/.mozilla/firefox/nm4ad5n5.default-esr/browser-extension-data/nemapi-bridge@local/ 2>/dev/null
+# check prefs for extension
+grep -i nemapi /home/leon/.mozilla/firefox/nm4ad5n5.default-esr/prefs.js 2>/dev/null | head
+# try launch firefox on display :0 with deepseek
+export DISPLAY=:0
+# is X accessible?
+xdpyinfo >/dev/null 2>&1 && echo "X OK" || echo "X FAIL"
+# check if deepseek cookies exist in firefox
+python3 - << "PY"
+import browser_cookie3
+try:
+    cj = browser_cookie3.firefox(domain_name="deepseek.com")
+    cookies = list(cj)
+    print("deepseek cookies:", len(cookies))
+    for c in cookies[:10]:
+        print(" ", c.name, (c.value[:30]+"...") if len(c.value)>30 else c.value)
+except Exception as e:
+    print("cookie err", e)
+try:
+    cj = browser_cookie3.firefox(domain_name="chat.deepseek.com")
+    print("chat.deepseek cookies:", len(list(cj)))
+except Exception as e:
+    print("chat cookie err", e)
+PY
+' (Check DeepSeek install and browser cookies)
+- Execute: # Read AstarteBam env example and install script for integration points
+sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 '
+cat /home/leon/AstarteBam/.env.example
+echo "====="
+cat /home/leon/AstarteBam/install_astartebam.sh
+echo "====="
+# how gemini is installed
+grep -n -i "gemini\|nemapi\|deepseek\|provider" /home/leon/AstarteBam/install_astartebam.sh /home/leon/AstarteBam/server.py /home/leon/AstarteBam/cli.py 2>/dev/null | head -60
+# is gemini_client in venv?
+/home/leon/AstarteBam/.venv/bin/python -c "import gemini_client; print(gemini_client.__file__)" 2>&1
+ls /home/leon/AstarteBam/.venv/lib/python*/site-packages/ | grep -i gemini
+' (Inspect AstarteBam install and Gemini package)
+
+## Assistant
+
+J’installe le Gemini corrigé dans AstarteBam, je renforce DeepSeek, puis j’intègre les providers.
+
+## Tools
+
+- Execute: # Inspect content.js actionSend and potential DeepSeek UI issues; also proxy main()
+sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 'sed -n "1240,1450p" /home/leon/Deepseek_API_bridge/extension/content.js; echo "===== MAIN ====="; sed -n "1300,1442p" /home/leon/Deepseek_API_bridge/proxy_openai.py' (Read content send logic and proxy main)
+- Execute: # Prepare AstarteBam integration patches locally then scp
+# 1) Update .env for NEMAPI + gemini
+# 2) Improve providers.py for better gemini history + error messages + health
+# 3) Create start scripts for deepseek
+# 4) Update install script to use local Gemini
+
+cat > /tmp/patch_astarte_providers.py << 'PYEOF'
+#!/usr/bin/env python3
+"""Improve AstarteBam core/providers.py for Gemini multi-turn + NEMAPI robustness."""
+from pathlib import Path
+
+path = Path("/home/leon/AstarteBam/core/providers.py")
+text = path.read_text(encoding="utf-8")
+
+old_gemini = '''        elif s['provider']=='gemini':
+            try:
+                from gemini_client import Chatbot, Model
+                cache_key = (s['slot'], s['model'])
+                bot = self.gemini_clients.get(cache_key)
+                if bot is None:
+                    model = Model.from_name(s['model'])
+                    bot = Chatbot(cookie_path=s['cookie_path'], model=model, timeout=None)
+                    self.gemini_clients[cache_key] = bot
+                response = bot.ask(messages[-1]['content'])
+                if not isinstance(response, dict) or response.get('error'):
+                    raise RuntimeError(str(response.get('content', response) if isinstance(response, dict) else response))
+                content = response.get('content', '')
+                return ''.join(content) if isinstance(content, list) else str(content)
+            except ImportError: raise RuntimeError('gemini_client non installé')'''
+
+new_gemini = '''        elif s['provider']=='gemini':
+            try:
+                from gemini_client import Chatbot, Model
+            except ImportError as e:
+                raise RuntimeError(
+                    "gemini_client non installé. "
+                    "Installez le client local: "
+                    ".venv/bin/pip install -e /home/leon/Gemini-Chat-API"
+                ) from e
+            cache_key = (s['slot'], s['model'])
+            bot = self.gemini_clients.get(cache_key)
+            if bot is None:
+                try:
+                    model = Model.from_name(s['model'])
+                except ValueError:
+                    # fallback graceful if model id drifts
+                    model = Model.G_2_5_PRO
+                # timeout=None = illimité (boucles agent longues)
+                bot = Chatbot(cookie_path=s['cookie_path'], model=model, timeout=None)
+                self.gemini_clients[cache_key] = bot
+            # Construire un prompt unique si multi-messages (Gemini web garde le fil via conversation_id)
+            if len(messages) == 1:
+                prompt = messages[0].get('content', '')
+            else:
+                parts = []
+                for m in messages:
+                    role = (m.get('role') or 'user').upper()
+                    content = m.get('content') or ''
+                    if isinstance(content, list):
+                        content = ''.join(
+                            p.get('text', str(p)) if isinstance(p, dict) else str(p)
+                            for p in content
+                        )
+                    parts.append(f"[{role}]\\n{content}")
+                prompt = "\\n\\n".join(parts)
+            response = bot.ask(str(prompt))
+            if not isinstance(response, dict) or response.get('error'):
+                # invalider le client en cas d'auth expirée pour forcer rechargement cookies
+                err = str(response.get('content', response) if isinstance(response, dict) else response)
+                if any(x in err.lower() for x in ('auth', 'cookie', 'snlm0e', 'permission', 'sign in')):
+                    self.gemini_clients.pop(cache_key, None)
+                raise RuntimeError(err)
+            content = response.get('content', '')
+            return ''.join(content) if isinstance(content, list) else str(content)'''
+
+if old_gemini not in text:
+    raise SystemExit('gemini block not found in providers.py')
+text = text.replace(old_gemini, new_gemini, 1)
+
+# Improve nemapi error when bridge down
+old_nemapi_req = '''    def nemapi_request(self, path, method="GET"):
+        """Interroge le bridge local sans secret cloud."""
+        slot = next((x for x in self.slots() if x["provider"] == "nemapi"), None)
+        if not slot:
+            raise RuntimeError("NEMAPI_ENABLED n'est pas activé")
+        req = urllib.request.Request(slot["url"] + path, method=method, headers={"User-Agent":"AstarteBam/6.0"})
+        return json.loads(urllib.request.urlopen(req, timeout=None).read().decode())'''
+
+new_nemapi_req = '''    def nemapi_request(self, path, method="GET"):
+        """Interroge le bridge local sans secret cloud."""
+        slot = next((x for x in self.slots() if x["provider"] == "nemapi"), None)
+        if not slot:
+            raise RuntimeError("NEMAPI_ENABLED n'est pas activé (NEMAPI_ENABLED=true dans .env)")
+        base = slot["url"].rstrip("/")
+        # /v1/session vs /session : accepter les deux formes
+        url = base + path if path.startswith("/") else base + "/" + path
+        req = urllib.request.Request(url, method=method, headers={"User-Agent":"AstarteBam/6.0"})
+        try:
+            return json.loads(urllib.request.urlopen(req, timeout=10).read().decode())
+        except Exception as e:
+            raise RuntimeError(
+                "Bridge DeepSeek injoignable sur {}. "
+                "Démarrez: cd /home/leon/Deepseek_API_bridge && ./start_proxy.sh — détail: {}".format(base, e)
+            ) from e'''
+
+if old_nemapi_req not in text:
+    raise SystemExit('nemapi_request block not found')
+text = text.replace(old_nemapi_req, new_nemapi_req, 1)
+
+# Better nemapi call errors
+old_call_else = '''        elif s['provider']=='nemapi':
+            body={'model':s['model'],'messages':messages,'temperature':.7,'max_tokens':4096}; headers={'Content-Type':'application/json','User-Agent':'AstarteBam/6.0'}'''
+
+new_call_else = '''        elif s['provider']=='nemapi':
+            body={'model':s['model'],'messages':messages,'temperature':.7,'max_tokens':4096}; headers={'Content-Type':'application/json','User-Agent':'AstarteBam/6.0'}
+            # Pré-check bridge (évite hang 10 min si proxy down)
+            try:
+                health_url = s['url'].rsplit('/v1', 1)[0] + '/health'
+                urllib.request.urlopen(urllib.request.Request(health_url, headers={'User-Agent':'AstarteBam/6.0'}), timeout=3)
+            except Exception as e:
+                raise RuntimeError(
+                    "NEMAPI bridge down ({}). Lancez ./start_proxy.sh dans Deepseek_API_bridge "
+                    "et chargez l'extension Firefox sur chat.deepseek.com. ({})".format(s['url'], e)
+                )'''
+
+if old_call_else not in text:
+    raise SystemExit('nemapi call block not found')
+text = text.replace(old_call_else, new_call_else, 1)
+
+backup = path.with_suffix('.py.bak_integration')
+if not backup.exists():
+    backup.write_text(path.read_text(encoding='utf-8'), encoding='utf-8')
+path.write_text(text, encoding='utf-8')
+print('OK providers.py patched')
+PYEOF
+
+# DeepSeek start script
+cat > /tmp/start_proxy.sh << 'SHEOF'
+#!/usr/bin/env bash
+# Démarre le proxy NEMAPI Bridge (DeepSeek → OpenAI)
+set -euo pipefail
+cd "$(dirname "$0")"
+export NEMAPI_HOST="${NEMAPI_HOST:-0.0.0.0}"
+export NEMAPI_PORT="${NEMAPI_PORT:-8080}"
+
+if ss -tln 2>/dev/null | grep -q ":${NEMAPI_PORT} "; then
+  echo "[NEMAPI] Déjà en écoute sur le port ${NEMAPI_PORT}"
+  curl -sS "http://127.0.0.1:${NEMAPI_PORT}/health" || true
+  echo
+  exit 0
+fi
+
+if [ -x "./venv/bin/python" ]; then
+  PY="./venv/bin/python"
+else
+  PY="python3"
+fi
+
+mkdir -p logs
+echo "[NEMAPI] Démarrage proxy avec $PY sur ${NEMAPI_HOST}:${NEMAPI_PORT}"
+nohup "$PY" proxy.py >> logs/proxy.log 2>&1 &
+echo $! > logs/proxy.pid
+sleep 1
+if ss -tln 2>/dev/null | grep -q ":${NEMAPI_PORT} "; then
+  echo "[NEMAPI] OK pid=$(cat logs/proxy.pid)"
+  curl -sS "http://127.0.0.1:${NEMAPI_PORT}/health"; echo
+  echo
+  echo "Suite manuelle Firefox :"
+  echo "  1. about:debugging → Ce Firefox → Charger temporairement → extension/"
+  echo "  2. Ouvrir https://chat.deepseek.com"
+  echo "  3. Panneau NEMAPI → Capturer → Connecter"
+else
+  echo "[NEMAPI] ÉCHEC — voir logs/proxy.log"
+  tail -30 logs/proxy.log || true
+  exit 1
+fi
+SHEOF
+
+cat > /tmp/stop_proxy.sh << 'SHEOF'
+#!/usr/bin/env bash
+cd "$(dirname "$0")"
+if [ -f logs/proxy.pid ]; then
+  pid=$(cat logs/proxy.pid)
+  kill "$pid" 2>/dev/null || true
+  rm -f logs/proxy.pid
+  echo "[NEMAPI] Stopped pid=$pid"
+fi
+# fallback
+pkill -f "Deepseek_API_bridge.*proxy" 2>/dev/null || true
+pkill -f "proxy_openai.py" 2>/dev/null || true
+echo "[NEMAPI] done"
+SHEOF
+
+# Launch firefox helper
+cat > /tmp/launch_deepseek_ui.sh << 'SHEOF'
+#!/usr/bin/env bash
+# Ouvre Firefox sur DeepSeek (DISPLAY :0) pour l'extension NEMAPI
+set -euo pipefail
+export DISPLAY="${DISPLAY:-:0}"
+EXT_DIR="$(cd "$(dirname "$0")/extension" && pwd)"
+
+if ! xdpyinfo >/dev/null 2>&1; then
+  echo "DISPLAY $DISPLAY inaccessible"
+  exit 1
+fi
+
+# Préférer un profil existant
+PROFILE="${FIREFOX_PROFILE:-nm4ad5n5.default-esr}"
+# --new-instance évite de bloquer si déjà ouvert
+firefox -P "$PROFILE" --new-tab "https://chat.deepseek.com" \
+  about:debugging#/runtime/this-firefox >/dev/null 2>&1 &
+echo "Firefox lancé. Chargez l'extension depuis: $EXT_DIR"
+echo "Puis: Capturer l'onglet DeepSeek + Connecter au proxy."
+SHEOF
+
+sshpass -p 'mazedxn7' scp -o StrictHostKeyChecking=no \
+  /tmp/patch_astarte_providers.py /tmp/start_proxy.sh /tmp/stop_proxy.sh /tmp/launch_deepseek_ui.sh \
+  leon@192.168.1.81:/tmp/
+ (Prepare Astarte and DeepSeek integration scripts)
+
+## Assistant
+
+Gemini validé dans le venv AstarteBam. J’applique l’intégration et j’améliore le health-check du bridge DeepSeek.
+
+## Tools
+
+- Execute: sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 '
+set -e
+python3 /tmp/patch_astarte_providers.py
+
+# install scripts
+cp /tmp/start_proxy.sh /home/leon/Deepseek_API_bridge/start_proxy.sh
+cp /tmp/stop_proxy.sh /home/leon/Deepseek_API_bridge/stop_proxy.sh
+cp /tmp/launch_deepseek_ui.sh /home/leon/Deepseek_API_bridge/launch_deepseek_ui.sh
+chmod +x /home/leon/Deepseek_API_bridge/start_proxy.sh /home/leon/Deepseek_API_bridge/stop_proxy.sh /home/leon/Deepseek_API_bridge/launch_deepseek_ui.sh
+
+# Update AstarteBam .env
+python3 - << "PY"
+from pathlib import Path
+p = Path("/home/leon/AstarteBam/.env")
+text = p.read_text(encoding="utf-8")
+# ensure keys
+updates = {
+    "NEMAPI_ENABLED": "true",
+    "NEMAPI_BASE_URL": "http://127.0.0.1:8080/v1",
+    "NEMAPI_MODEL": "deepseek-web",
+    "NEMAPI_RESET_ON_NEW_TASK": "true",
+    "GEMINI_MODEL_1": "gemini-2.5-flash",
+    "GEMINI_MODEL_2": "gemini-2.5-pro",
+    "AI_PROVIDER": "gemini",
+    "WORKER_MODE": "api",
+}
+lines = text.splitlines()
+keys_seen = set()
+out = []
+for line in lines:
+    if not line.strip() or line.strip().startswith("#") or "=" not in line:
+        out.append(line)
+        continue
+    k = line.split("=",1)[0].strip()
+    if k in updates:
+        out.append(f"{k}={updates[k]}")
+        keys_seen.add(k)
+    else:
+        out.append(line)
+for k,v in updates.items():
+    if k not in keys_seen:
+        out.append(f"{k}={v}")
+p.write_text("\\n".join(out)+"\\n", encoding="utf-8")
+print("env updated")
+print(p.read_text())
+PY
+
+# Copy fresh gemini cookies to Astarte secrets
+cp /home/leon/Gemini-Chat-API/cookies_fixed.json /home/leon/AstarteBam/.secrets/gemini_slot_1.json
+chmod 600 /home/leon/AstarteBam/.secrets/gemini_slot_1.json
+
+# Patch install script to prefer local Gemini-Chat-API
+python3 - << "PY"
+from pathlib import Path
+p = Path("/home/leon/AstarteBam/install_astartebam.sh")
+t = p.read_text()
+old = """info \"Installation optionnelle de Gemini-Chat-API\"
+if command -v git >/dev/null 2>&1; then
+  if ! \"$PYTHON\" -m pip install --upgrade '\''git+https://github.com/OEvortex/Gemini-Chat-API.git'\''; then
+    warn \"Gemini-Chat-API n'\''a pas pu être installé. Groq, NVIDIA, Fireworks et Cohere restent utilisables. Relancez plus tard cette commande :\\n  .venv/bin/python -m pip install git+https://github.com/OEvortex/Gemini-Chat-API.git\"
+  fi
+else
+  warn \"Git est absent : l'\''intégration Gemini est ignorée pour le moment.\"
+fi"""
+new = """info \"Installation de Gemini-Chat-API (local prioritaire)\"
+LOCAL_GEMINI=\"/home/leon/Gemini-Chat-API\"
+if [ -d \"$LOCAL_GEMINI/gemini_client\" ]; then
+  if ! \"$PYTHON\" -m pip install -e \"$LOCAL_GEMINI\"; then
+    warn \"Installation locale Gemini échouée.\"
+  else
+    info \"Gemini-Chat-API local installé depuis $LOCAL_GEMINI\"
+  fi
+elif command -v git >/dev/null 2>&1; then
+  if ! \"$PYTHON\" -m pip install --upgrade '\''git+https://github.com/OEvortex/Gemini-Chat-API.git'\''; then
+    warn \"Gemini-Chat-API n'\''a pas pu être installé.\"
+  fi
+else
+  warn \"Ni Gemini local ni git : intégration Gemini ignorée.\"
+fi
+
+info \"Rappel DeepSeek / NEMAPI\"
+if [ -x /home/leon/Deepseek_API_bridge/start_proxy.sh ]; then
+  echo \"  Bridge: /home/leon/Deepseek_API_bridge/start_proxy.sh\"
+  echo \"  Puis Firefox extension/ + chat.deepseek.com (Capturer + Connecter)\"
+  echo \"  Activez NEMAPI_ENABLED=true dans .env ou /model nemapi 1\"
+fi"""
+if old not in t:
+    print("install block not exact, trying softer replace")
+    if "git+https://github.com/OEvortex/Gemini-Chat-API.git" in t:
+        t = t.replace(
+            "if ! \"$PYTHON\" -m pip install --upgrade '\''git+https://github.com/OEvortex/Gemini-Chat-API.git'\''; then",
+            "LOCAL_GEMINI=\"/home/leon/Gemini-Chat-API\"\n"
+            "if [ -d \"$LOCAL_GEMINI/gemini_client\" ]; then\n"
+            "  if ! \"$PYTHON\" -m pip install -e \"$LOCAL_GEMINI\"; then\n"
+            "    warn \"Gemini local KO\";\n"
+            "  fi\n"
+            "elif ! \"$PYTHON\" -m pip install --upgrade '\''git+https://github.com/OEvortex/Gemini-Chat-API.git'\''; then"
+        )
+        p.write_text(t)
+        print("soft patch ok")
+    else:
+        print("no gemini install string")
+else:
+    p.write_text(t.replace(old, new))
+    print("install script patched")
+PY
+' (Apply Astarte env/providers and DeepSeek scripts)
+
+## Assistant
+
+Le `.env` a été mal écrit — je corrige ça.
+
+## Tools
+
+- Execute: sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 '
+# Check if env is broken
+python3 - << "PY"
+from pathlib import Path
+p = Path("/home/leon/AstarteBam/.env")
+raw = p.read_text()
+print(repr(raw[:200]))
+print("--- lines ---")
+print(len(raw.splitlines()), "lines")
+for i,l in enumerate(raw.splitlines()[:30],1):
+    print(i, l[:80])
+PY
+' (Inspect broken .env content)
+- Execute: # Write proper .env via scp to avoid escaping issues
+cat > /tmp/astarte_env << 'EOF'
+# AstarteBam v6.0 — Configuration
+HOST=127.0.0.1
+ADMIN_HOST=127.0.0.1
+PORT=8765
+ADMIN_PORT=8766
+API_KEY=
+MAX_ACTIONS=20
+MAX_CONTENT_SIZE=1048576
+WORKER_MODE=api
+COMMAND_POLICY=warn
+ORCHESTRATION_MODE=individual
+COLLAB_MAX_AGENTS=3
+AI_PROVIDER=gemini
+AI_SLOT=1
+
+NVIDIA_API_KEY=votre_cle_ici
+NVIDIA_MODEL=qwen/qwen3-next-80b-a3b-instruct
+NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
+NVIDIA_API_KEY_1=
+NVIDIA_MODEL_1=qwen/qwen3-next-80b-a3b-instruct
+NVIDIA_API_KEY_2=
+NVIDIA_MODEL_2=qwen/qwen3-next-80b-a3b-instruct
+
+GROQ_API_KEY=
+GROQ_MODEL=qwen/qwen3.6-27b
+GROQ_BASE_URL=https://api.groq.com/openai/v1
+GROQ_API_KEY_1=
+GROQ_MODEL_1=qwen/qwen3.6-27b
+GROQ_API_KEY_2=
+GROQ_MODEL_2=qwen/qwen3.6-27b
+
+FIREWORKS_API_KEY_1=
+FIREWORKS_MODEL_1=accounts/fireworks/models/deepseek-v4-pro
+FIREWORKS_API_KEY_2=
+FIREWORKS_MODEL_2=accounts/fireworks/models/deepseek-v4-pro
+
+COHERE_API_KEY_1=
+COHERE_MODEL_1=command-a-03-2025
+COHERE_API_KEY_2=
+COHERE_MODEL_2=command-a-03-2025
+
+# Gemini reverse API (cookies locaux dans .secrets/)
+GEMINI_MODEL_1=gemini-2.5-flash
+GEMINI_MODEL_2=gemini-2.5-pro
+
+# NEMAPI / DeepSeek Bridge local (sans clé cloud)
+# cd /home/leon/Deepseek_API_bridge && ./start_proxy.sh
+# Firefox: charger extension/ + capturer chat.deepseek.com
+NEMAPI_ENABLED=true
+NEMAPI_BASE_URL=http://127.0.0.1:8080/v1
+NEMAPI_MODEL=deepseek-web
+NEMAPI_RESET_ON_NEW_TASK=true
+
+NEMESIS_API_URL=
+NEMESIS_MODEL=
+EOF
+sshpass -p 'mazedxn7' scp -o StrictHostKeyChecking=no /tmp/astarte_env leon@192.168.1.81:/home/leon/AstarteBam/.env
+sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 'chmod 600 /home/leon/AstarteBam/.env; wc -l /home/leon/AstarteBam/.env; head -20 /home/leon/AstarteBam/.env' (Rewrite proper AstarteBam .env file)
+- Execute: # Patch proxy_openai for extension presence tracking
+cat > /tmp/patch_deepseek_proxy.py << 'PYEOF'
+#!/usr/bin/env python3
+from pathlib import Path
+path = Path("/home/leon/Deepseek_API_bridge/proxy_openai.py")
+text = path.read_text(encoding="utf-8")
+
+# Add extension heartbeat global after browser_session
+needle = "browser_session = BrowserSession()\n"
+if "extension_last_seen" not in text:
+    text = text.replace(
+        needle,
+        needle + "\n# Dernier poll de l'extension Firefox (heartbeat)\nextension_last_seen: float = 0.0\nextension_poll_count: int = 0\n",
+        1,
+    )
+
+# Update handle_poll_jobs to stamp last seen
+old = '''async def handle_poll_jobs() -> Tuple[int, Any, str]:
+    job = await jobs_manager.get_pending_job()
+    if job:
+        return (
+            200,
+            {
+                "action": "ask",
+                "jobId": job["id"],
+                "question": job["text"],
+                "text": job["text"],
+                "mode": job["mode"],
+                "meta": job.get("meta") or {},
+            },
+            "application/json",
+        )
+    return 200, {"action": "idle"}, "application/json"'''
+
+new = '''async def handle_poll_jobs() -> Tuple[int, Any, str]:
+    global extension_last_seen, extension_poll_count
+    extension_last_seen = time.time()
+    extension_poll_count += 1
+    job = await jobs_manager.get_pending_job()
+    if job:
+        return (
+            200,
+            {
+                "action": "ask",
+                "jobId": job["id"],
+                "question": job["text"],
+                "text": job["text"],
+                "mode": job["mode"],
+                "meta": job.get("meta") or {},
+            },
+            "application/json",
+        )
+    return 200, {"action": "idle", "extension_seen": True}, "application/json"'''
+
+if old not in text:
+    raise SystemExit("handle_poll_jobs not found")
+text = text.replace(old, new, 1)
+
+# Update health endpoint
+old_health = '''    if path in ("/health", "/status") and method == "GET":
+        return (
+            200,
+            {
+                "status": "ok",
+                "service": "nemapi-bridge-openai",
+                "version": "2.4",
+                "features": ["send", "delta", "files"],
+                "session": browser_session.to_dict(),
+            },
+            "application/json",
+        )'''
+
+new_health = '''    if path in ("/health", "/status") and method == "GET":
+        age = (time.time() - extension_last_seen) if extension_last_seen else None
+        return (
+            200,
+            {
+                "status": "ok",
+                "service": "nemapi-bridge-openai",
+                "version": "2.7",
+                "features": ["send", "delta", "files", "extension-heartbeat"],
+                "session": browser_session.to_dict(),
+                "extension": {
+                    "connected": bool(extension_last_seen and age is not None and age < 10),
+                    "last_seen_ago_s": round(age, 1) if age is not None else None,
+                    "poll_count": extension_poll_count,
+                },
+            },
+            "application/json",
+        )'''
+
+if old_health not in text:
+    raise SystemExit("health block not found")
+text = text.replace(old_health, new_health, 1)
+
+# bump version strings
+text = text.replace("NEMAPI Bridge v2.4", "NEMAPI Bridge v2.7", 1)
+
+backup = path.with_suffix(".py.bak_heartbeat")
+if not backup.exists():
+    backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+path.write_text(text, encoding="utf-8")
+print("proxy patched OK")
+PYEOF
+
+sshpass -p 'mazedxn7' scp -o StrictHostKeyChecking=no /tmp/patch_deepseek_proxy.py leon@192.168.1.81:/tmp/
+sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 '
+python3 /tmp/patch_deepseek_proxy.py
+# restart proxy
+cd /home/leon/Deepseek_API_bridge
+./stop_proxy.sh || true
+# kill old python proxy on 8080
+fuser -k 8080/tcp 2>/dev/null || true
+sleep 1
+./start_proxy.sh
+curl -sS http://127.0.0.1:8080/health; echo
+'
+
+# Verify providers.py
+sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 'python3 -m py_compile /home/leon/AstarteBam/core/providers.py && echo providers_ok; head -5 /home/leon/AstarteBam/core/providers.py; grep -n "gemini\|nemapi\|health\|normalize" /home/leon/AstarteBam/core/providers.py | head -30' (Patch DeepSeek heartbeat, restart proxy, verify providers)
+- Execute: sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 '
+ss -tlnp | grep 8080 || echo "no 8080"
+cd /home/leon/Deepseek_API_bridge
+bash -x ./start_proxy.sh 2>&1 | tail -40
+ss -tlnp | grep 8080 || echo "still no"
+curl -sS http://127.0.0.1:8080/health; echo
+cat logs/proxy.log 2>/dev/null | tail -20
+' (Force start DeepSeek proxy and verify health)
+- Execute: sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 '
+# kill old proxy
+kill 15956 2>/dev/null || true
+sleep 1
+kill -9 15956 2>/dev/null || true
+sleep 1
+ss -tlnp | grep 8080 || echo "port free"
+cd /home/leon/Deepseek_API_bridge
+# ensure patch has extension_last_seen
+grep -n "extension_last_seen\|version.*2.7\|2.4" proxy_openai.py | head -15
+./venv/bin/python -c "import proxy_openai; print(\"import ok\")" 2>&1 | head
+# start fresh
+rm -f logs/proxy.pid
+nohup ./venv/bin/python proxy.py > logs/proxy.log 2>&1 &
+echo $! > logs/proxy.pid
+sleep 1
+ss -tlnp | grep 8080
+curl -sS http://127.0.0.1:8080/health; echo
+tail -15 logs/proxy.log
+' (Kill old proxy and start patched v2.7)
+- Execute: sshpass -p 'mazedxn7' ssh -o StrictHostKeyChecking=no leon@192.168.1.81 '
+cd /home/leon/Deepseek_API_bridge
+mkdir -p logs
+# fix start script banner version later
+nohup ./venv/bin/python proxy.py > logs/proxy.log 2>&1 &
+echo $! > logs/proxy.pid
+sleep 1.5
+cat logs/proxy.pid
+ss -tlnp | grep 8080
+curl -sS http://127.0.0.1:8080/health; echo
+head -20 logs/proxy.log
+' (Create logs dir and start DeepSeek proxy)

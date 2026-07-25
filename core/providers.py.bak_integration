@@ -1,0 +1,91 @@
+"""Registre multi-fournisseurs : maximum deux slots par fournisseur."""
+import json, os, threading, urllib.request, urllib.error
+
+OPENAI_PROVIDERS = {
+    "groq": ("GROQ", "https://api.groq.com/openai/v1", "qwen/qwen3.6-27b"),
+    "nvidia": ("NVIDIA", "https://integrate.api.nvidia.com/v1", "qwen/qwen3-next-80b-a3b-instruct"),
+    # Vérifiez le catalogue Fireworks de votre compte avant emploi : le nom varie selon l'offre.
+    "fireworks": ("FIREWORKS", "https://api.fireworks.ai/inference/v1", "accounts/fireworks/models/deepseek-v4-pro"),
+}
+class ProviderRegistry:
+    def __init__(self, env=None):
+        self.env=env or os.environ; self.cursor=0; self.lock=threading.Lock(); self.stats={}; self.gemini_clients={}
+    def slots(self):
+        out=[]
+        for name,(prefix,default_url,default_model) in OPENAI_PROVIDERS.items():
+            for n in (1,2):
+                key=self.env.get('%s_API_KEY_%d'%(prefix,n), self.env.get('%s_API_KEY'%prefix,'') if n==1 else '')
+                if key: out.append({'provider':name,'slot':n,'key':key,'url':self.env.get('%s_BASE_URL'%prefix,default_url).rstrip('/'),'model':self.env.get('%s_MODEL_%d'%(prefix,n),self.env.get('%s_MODEL'%prefix,default_model))})
+        # NEMAPI est un bridge navigateur local : pas de clé cloud requise.
+        if self.env.get('NEMAPI_ENABLED','false').strip().lower() in ('1','true','yes','on'):
+            out.append({'provider':'nemapi','slot':1,'key':'','url':self.env.get('NEMAPI_BASE_URL','http://127.0.0.1:8080/v1').rstrip('/'),'model':self.env.get('NEMAPI_MODEL','deepseek-web')})
+        for n in (1,2):
+            key=self.env.get('COHERE_API_KEY_%d'%n, self.env.get('COHERE_API_KEY','') if n==1 else '')
+            if key: out.append({'provider':'cohere','slot':n,'key':key,'model':self.env.get('COHERE_MODEL_%d'%n,self.env.get('COHERE_MODEL','command-a-03-2025')),'url':'https://api.cohere.com/v2/chat'})
+        for n in (1,2):
+            path=self.env.get('GEMINI_COOKIE_PATH_%d'%n, os.path.join(os.path.dirname(os.path.dirname(__file__)),'.secrets','gemini_slot_%d.json'%n))
+            if os.path.exists(path): out.append({'provider':'gemini','slot':n,'cookie_path':path,'model':self.env.get('GEMINI_MODEL_%d'%n,'gemini-2.5-pro')})
+        return out
+    def public_status(self):
+        return [{'provider':x['provider'],'slot':x['slot'],'model':x['model'],'configured':True, **self.stats.get((x['provider'],x['slot']),{})} for x in self.slots()]
+    def ordered(self, preferred=None, preferred_slot=None):
+        items=self.slots()
+        if preferred:
+            items.sort(key=lambda x: (0 if x['provider']==preferred else 1, 0 if str(x['slot'])==str(preferred_slot) else 1))
+        # En individuel, le slot demandé est prioritaire ; les autres restent disponibles en fallback.
+        if preferred and preferred_slot:
+            return items
+        with self.lock:
+            if items:
+                shift=self.cursor%len(items); self.cursor+=1; items=items[shift:]+items[:shift]
+        return items
+    def call(self,messages,preferred=None,preferred_slot=None):
+        errors=[]
+        for slot in self.ordered(preferred, preferred_slot):
+            try:
+                text=self._call_slot(slot,messages); self.stats[(slot['provider'],slot['slot'])]={'state':'ok'}; return text,slot,None
+            except Exception as e:
+                self.stats[(slot['provider'],slot['slot'])]={'state':'error','error':str(e)[:160]}; errors.append('%s/%s: %s'%(slot['provider'],slot['slot'],e))
+        return None,None,' | '.join(errors) or 'Aucun fournisseur configuré'
+    def nemapi_request(self, path, method="GET"):
+        """Interroge le bridge local sans secret cloud."""
+        slot = next((x for x in self.slots() if x["provider"] == "nemapi"), None)
+        if not slot:
+            raise RuntimeError("NEMAPI_ENABLED n'est pas activé")
+        req = urllib.request.Request(slot["url"] + path, method=method, headers={"User-Agent":"AstarteBam/6.0"})
+        return json.loads(urllib.request.urlopen(req, timeout=None).read().decode())
+
+    def reset_nemapi_session(self):
+        return self.nemapi_request("/sessions/reset", method="POST")
+
+    def nemapi_status(self):
+        return {"session": self.nemapi_request("/session"), "models": self.nemapi_request("/models")}
+
+    def _call_slot(self,s,messages):
+        if s['provider']=='cohere':
+            body={'model':s['model'],'messages':[{'role':m['role'],'content':m['content']} for m in messages]}; headers={'Authorization':'Bearer '+s['key'],'Content-Type':'application/json','User-Agent':'AstarteBam/6.0'}
+        elif s['provider']=='nemapi':
+            body={'model':s['model'],'messages':messages,'temperature':.7,'max_tokens':4096}; headers={'Content-Type':'application/json','User-Agent':'AstarteBam/6.0'}
+        elif s['provider']=='gemini':
+            try:
+                from gemini_client import Chatbot, Model
+                cache_key = (s['slot'], s['model'])
+                bot = self.gemini_clients.get(cache_key)
+                if bot is None:
+                    model = Model.from_name(s['model'])
+                    bot = Chatbot(cookie_path=s['cookie_path'], model=model, timeout=None)
+                    self.gemini_clients[cache_key] = bot
+                response = bot.ask(messages[-1]['content'])
+                if not isinstance(response, dict) or response.get('error'):
+                    raise RuntimeError(str(response.get('content', response) if isinstance(response, dict) else response))
+                content = response.get('content', '')
+                return ''.join(content) if isinstance(content, list) else str(content)
+            except ImportError: raise RuntimeError('gemini_client non installé')
+        else:
+            body={'model':s['model'],'messages':messages,'temperature':.7,'max_tokens':4096}; headers={'Authorization':'Bearer '+s['key'],'Content-Type':'application/json','User-Agent':'AstarteBam/6.0'}
+        req=urllib.request.Request(s['url'] if s['provider']=='cohere' else s['url']+'/chat/completions',data=json.dumps(body).encode(),headers=headers)
+        try:
+            data=json.loads(urllib.request.urlopen(req,timeout=None).read().decode())
+        except urllib.error.HTTPError as e: raise RuntimeError('HTTP %s %s'%(e.code,e.read().decode(errors='replace')[:200]))
+        if s['provider']=='cohere': return ''.join(x.get('text','') for x in data.get('message',{}).get('content',[]))
+        return data['choices'][0]['message']['content']

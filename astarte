@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# Astarte BAM v6.0.0 — Lanceur local (Indépendant)
+set -u
+
+BASE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PYTHON="${ASTARTE_PYTHON:-python3}"
+if [ -x "$BASE_DIR/.venv/bin/python" ]; then PYTHON="$BASE_DIR/.venv/bin/python"; fi
+
+start_ai_bridges() {
+  echo "[BRIDGE] Vérification des modules IA locaux..."
+  
+  # 1. DeepSeek (8080)
+  if ! ss -tln | grep -q ":8080 "; then
+    echo "[BRIDGE] Lancement du bridge DeepSeek interne (8080)..."
+    (cd "$BASE_DIR/bridges/deepseek" && nohup ./start_proxy.sh > /dev/null 2>&1 &)
+  fi
+  
+  # Lancement automatique de l'onglet DeepSeek pour réveiller l'extension
+  if ! ps aux | grep -i "[f]irefox.*chat.deepseek.com" > /dev/null; then
+    echo "[BROWSER] Ouverture de Firefox sur DeepSeek en arrière-plan..."
+    nohup firefox "https://chat.deepseek.com" > /dev/null 2>&1 &
+  fi
+
+  # 2. Gemini (8081)
+  if ! ss -tln | grep -q ":8081 "; then
+    echo "[BRIDGE] Lancement du bridge Gemini interne (8081)..."
+    (cd "$BASE_DIR/bridges/gemini" && nohup "$PYTHON" proxy_gemini.py > /dev/null 2>&1 &)
+  fi
+  echo "✔ Bridges locaux actifs."
+}
+
+start_ai_bridges
+
+SERVER="$BASE_DIR/server.py"
+CLI="$BASE_DIR/cli.py"
+ENV_FILE="$BASE_DIR/.env"
+ENV_EXAMPLE="$BASE_DIR/.env.example"
+SERVER_PID=""
+
+CLEANUP_DONE=0
+cleanup() {
+  if [ "$CLEANUP_DONE" -eq 1 ]; then return; fi
+  CLEANUP_DONE=1
+  echo
+  echo "--- FERMETURE DES SERVICES ---"
+  if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
+    kill "$SERVER_PID" 2>/dev/null || true
+  fi
+  echo "[SYSTEM] Libération des ports Astarte 8765 et 8766..."
+  fuser -k 8765/tcp 2>/dev/null || true
+  fuser -k 8766/tcp 2>/dev/null || true
+  echo "✔ Services arrêtés."
+}
+
+trap cleanup EXIT INT TERM
+
+if [ ! -f "$ENV_FILE" ] && [ -f "$ENV_EXAMPLE" ]; then
+  cp "$ENV_EXAMPLE" "$ENV_FILE"
+fi
+
+start_server() {
+  "$PYTHON" "$SERVER" &
+  SERVER_PID=$!
+  sleep 0.7
+}
+
+echo "============================================"
+echo "  ASTARTE BAM v6.0.0 — Contrôleur Indépendant"
+echo "============================================"
+echo "1) Serveur API + interface admin"
+echo "2) Client terminal (CLI)"
+echo "3) Serveur + CLI"
+echo "4) Quitter"
+echo
+read -r -p "Choix > " choice
+
+case "$choice" in
+  1) exec "$PYTHON" "$SERVER" ;;
+  2) exec "$PYTHON" "$CLI" ;;
+  3)
+    start_server
+    echo "API   : http://127.0.0.1:8765"
+    echo "Admin : http://127.0.0.1:8766"
+    "$PYTHON" "$CLI"
+    ;;
+  4) echo "À bientôt." ;;
+  *) echo "Choix invalide." >&2; exit 2 ;;
+esac

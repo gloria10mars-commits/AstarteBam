@@ -1,0 +1,1442 @@
+#!/usr/bin/env python3
+"""
+NEMAPI Bridge — Proxy OpenAI compatible (send + delta + files)
+
+Modèle d'interaction navigateur (DeepSeek) :
+  Chaque tour → SEND dans la barre de texte (composer bas).
+  On n'envoie QUE le message courant (delta) : le contexte multi-tour
+  est déjà géré par les serveurs DeepSeek sur l'onglet / le fil ouvert.
+  Fichiers → attach UI DeepSeek puis prompt d'analyse.
+  Pas de regenerate / edit (limite plateforme ~7).
+
+L'API reste OpenAI :
+  POST /v1/chat/completions
+  POST /v1/files            — upload (+ prompt optionnel)
+  GET  /v1/models
+  POST /v1/sessions/reset   — nouveau fil logique
+  GET  /v1/session          — état session
+
+L'extension reçoit des jobs :
+  { action, jobId, mode: "send", text, meta: { files?, upload_only? } }
+"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import json
+import mimetypes
+import os
+import re
+import socket
+import time
+import uuid
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import parse_qs, urlparse
+
+
+# ═══════════════════════════════════════════════════════════
+# Session navigateur (un fil de discussion DeepSeek)
+# ═══════════════════════════════════════════════════════════
+
+class BrowserSession:
+    """État logique d'une conversation unique côté onglet."""
+
+    def __init__(self) -> None:
+        self.id: str = str(uuid.uuid4())
+        self.created_at: float = time.time()
+        self.turn_count: int = 0  # nb de jobs complétés avec succès
+        self.has_sent_user_message: bool = False
+        self.system_seeded: bool = False
+        self.last_user_blob: str = ""
+        self.last_assistant: str = ""
+        self.last_job_id: Optional[str] = None
+
+    def reset(self) -> None:
+        self.id = str(uuid.uuid4())
+        self.created_at = time.time()
+        self.turn_count = 0
+        self.has_sent_user_message = False
+        self.system_seeded = False
+        self.last_user_blob = ""
+        self.last_assistant = ""
+        self.last_job_id = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "created_at": self.created_at,
+            "turn_count": self.turn_count,
+            "has_sent_user_message": self.has_sent_user_message,
+            "system_seeded": self.system_seeded,
+            "last_user_preview": (self.last_user_blob or "")[:120],
+            "last_assistant_preview": (self.last_assistant or "")[:120],
+        }
+
+
+browser_session = BrowserSession()
+
+
+# ═══════════════════════════════════════════════════════════
+# Jobs (extension Firefox)
+# ═══════════════════════════════════════════════════════════
+
+class JobsManager:
+    def __init__(self) -> None:
+        self.jobs: Dict[str, Dict[str, Any]] = {}
+        self.pending_queue: List[Dict[str, Any]] = []
+        self._lock = asyncio.Lock()
+
+    async def create_job(
+        self,
+        text: str,
+        mode: str = "send",
+        meta: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        job_id = str(uuid.uuid4())
+        event = asyncio.Event()
+        # v2.3 : toujours send (regenerate abandonné — limite DeepSeek)
+        job = {
+            "id": job_id,
+            "status": "pending",
+            "question": text,  # compat extension ancienne
+            "text": text,
+            "mode": "send",
+            "meta": meta or {},
+            "result": None,
+            "timestamp": datetime.now().isoformat(),
+            "event": event,
+        }
+        mode = "send"
+        async with self._lock:
+            self.jobs[job_id] = job
+            self.pending_queue.append(job)
+        preview = text.replace("\n", " ")[:50]
+        nfiles = len((meta or {}).get("files") or [])
+        extra = f" files={nfiles}" if nfiles else ""
+        print(f"[JOB] +{mode} {job_id[:8]}…{extra} — \"{preview}…\"")
+        return job_id
+
+    async def get_pending_job(self) -> Optional[Dict[str, Any]]:
+        async with self._lock:
+            while self.pending_queue:
+                job = self.pending_queue[0]
+                if job["status"] == "pending":
+                    job["status"] = "in_progress"
+                    self.pending_queue.pop(0)  # retiré dès prise en charge
+                    return {
+                        "id": job["id"],
+                        "jobId": job["id"],
+                        "question": job["text"],
+                        "text": job["text"],
+                        "mode": job["mode"],
+                        "meta": job.get("meta") or {},
+                        "status": job["status"],
+                    }
+                self.pending_queue.pop(0)
+        return None
+
+    async def set_result(self, job_id: str, result: str) -> bool:
+        async with self._lock:
+            job = self.jobs.get(job_id)
+            if not job:
+                return False
+            # Idempotent : ignorer POST doublons (évite races)
+            if job["status"] in ("completed", "error"):
+                return True
+            job["status"] = "completed"
+            job["result"] = result
+            job["event"].set()
+            preview = (result or "").replace("\n", " ")[:60]
+            print(f"[JOB] OK {job_id[:8]}… — \"{preview}…\"")
+            return True
+
+    async def set_error(self, job_id: str, error: str) -> bool:
+        async with self._lock:
+            job = self.jobs.get(job_id)
+            if not job:
+                return False
+            if job["status"] in ("completed", "error"):
+                return True
+            job["status"] = "error"
+            job["result"] = error
+            job["event"].set()
+            print(f"[JOB] ERR {job_id[:8]}… — {error[:80]}")
+            return True
+
+    def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        return self.jobs.get(job_id)
+
+    async def wait_job(self, job_id: str, timeout: float = 600.0) -> Dict[str, Any]:
+        job = self.jobs.get(job_id)
+        if not job:
+            return {"status": "error", "result": "Job introuvable"}
+        try:
+            await asyncio.wait_for(job["event"].wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            return {"status": "error", "result": "Timeout: pas de réponse de l'extension"}
+        return {"status": job["status"], "result": job.get("result")}
+
+    async def cancel_all(self) -> None:
+        async with self._lock:
+            for job in self.jobs.values():
+                if job["status"] in ("pending", "in_progress"):
+                    job["status"] = "error"
+                    job["result"] = "ANNULÉ"
+                    job["event"].set()
+            self.pending_queue.clear()
+
+
+jobs_manager = JobsManager()
+
+
+# ═══════════════════════════════════════════════════════════
+# Packing prompt (delta, pas historique empilé)
+# ═══════════════════════════════════════════════════════════
+
+TOOL_PROTOCOL = """
+═══════════════════════════════════════════════════════════════
+PROTOCOLE OUTILS (NEMESIS CLI — obligatoire pour actions)
+═══════════════════════════════════════════════════════════════
+Pour une action système, réponds avec UNIQUEMENT un bloc JSON :
+
+```json
+{"tool_calls":[{"name":"NOM_OUTIL","arguments":{...}}]}
+```
+
+Règles :
+1. Pas de shell en texte hors JSON.
+2. arguments = objet JSON.
+3. Sans outil → réponse langage naturel SANS tool_calls.
+4. Après résultats d'outils → nouvel outil OU réponse finale.
+═══════════════════════════════════════════════════════════════
+"""
+
+
+def _content_to_str(content: Any) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for p in content:
+            if isinstance(p, dict):
+                if p.get("type") == "text":
+                    parts.append(p.get("text", ""))
+                else:
+                    parts.append(str(p))
+            else:
+                parts.append(str(p))
+        return "\n".join(parts)
+    return str(content)
+
+
+def _describe_tools(tools: Optional[List[Dict[str, Any]]]) -> str:
+    if not tools:
+        return ""
+    lines = ["\n── Outils disponibles ──\n"]
+    for tool in tools:
+        fn = tool.get("function", tool)
+        name = fn.get("name", "?")
+        desc = (fn.get("description") or "")[:200]
+        params = fn.get("parameters", {}) or {}
+        props = params.get("properties", {}) or {}
+        required = params.get("required", []) or []
+        lines.append(f"• {name}: {desc}")
+        for pname, pinfo in list(props.items())[:12]:
+            if not isinstance(pinfo, dict):
+                continue
+            ptype = pinfo.get("type", "any")
+            req = "requis" if pname in required else "opt"
+            lines.append(f"    - {pname} ({ptype}, {req})")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _is_tool_result_batch(messages: List[Dict[str, Any]]) -> bool:
+    if not messages:
+        return False
+    # Dernier message tool, ou user synthétique de résultats
+    last = messages[-1]
+    if last.get("role") == "tool":
+        return True
+    content = _content_to_str(last.get("content"))
+    if last.get("role") == "user" and (
+        "RÉSULTAT OUTIL" in content
+        or "RESULTAT OUTIL" in content
+        or "### RÉSULTAT" in content
+        or content.strip().startswith("Voici les résultats")
+    ):
+        return True
+    return False
+
+
+def pack_delta_for_browser(
+    messages: List[Dict[str, Any]],
+    tools: Optional[List[Dict[str, Any]]] = None,
+    tool_choice: Any = "auto",
+    *,
+    include_system: bool = False,
+    session: Optional[BrowserSession] = None,
+) -> str:
+    """Construit le TEXTE d'UN message (delta) pour le composer DeepSeek.
+
+    Ne re-colle PAS tout l'historique OpenAI : le fil DeepSeek conserve
+    déjà la discussion côté serveur. On envoie system (1×), outils si besoin,
+    puis le dernier user / batch de résultats d'outils.
+    """
+    parts: List[str] = []
+    include_tools = bool(tools) and tool_choice != "none"
+    force_tools = tool_choice not in (None, "none", "auto") or isinstance(
+        tool_choice, dict
+    )
+
+    # System une seule fois (premier send de session)
+    if include_system:
+        for msg in messages:
+            if msg.get("role") == "system":
+                sys_c = _content_to_str(msg.get("content")).strip()
+                if sys_c:
+                    # Tronquer system très long pour le navigateur
+                    max_sys = int(os.environ.get("NEMAPI_MAX_SYSTEM", "6000"))
+                    if len(sys_c) > max_sys:
+                        sys_c = sys_c[:max_sys] + "\n[... system tronqué ...]"
+                    parts.append(f"[SYSTEM]\n{sys_c}")
+                break
+
+    if include_tools:
+        parts.append(TOOL_PROTOCOL.strip())
+        parts.append(_describe_tools(tools).strip())
+        if force_tools or tool_choice == "required":
+            parts.append(
+                "[INSTRUCTION] Tu DOIS appeler au moins un outil via JSON tool_calls."
+            )
+
+    # Delta : dernier(s) message(s) utiles
+    if not messages:
+        body = ""
+    elif _is_tool_result_batch(messages):
+        # Tous les tool results en fin de liste
+        batch: List[Dict[str, Any]] = []
+        for msg in reversed(messages):
+            if msg.get("role") == "tool":
+                batch.append(msg)
+            elif msg.get("role") == "user" and not batch:
+                # user synthétique unique
+                batch.append(msg)
+                break
+            else:
+                break
+        batch.reverse()
+        chunks = []
+        for m in batch:
+            if m.get("role") == "tool":
+                chunks.append(
+                    f"[RÉSULTAT OUTIL `{m.get('name', 'outil')}`]\n"
+                    f"{_content_to_str(m.get('content'))}"
+                )
+            else:
+                chunks.append(_content_to_str(m.get("content")))
+        body = "\n\n".join(chunks)
+        parts.append(
+            "[SUITE — résultats d'outils]\n"
+            "Analyse et continue (JSON tool_calls ou réponse finale).\n\n"
+            + body
+        )
+    else:
+        # Dernier message user (ou assistant si seul)
+        last_user = None
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                last_user = msg
+                break
+        if last_user:
+            body = _content_to_str(last_user.get("content"))
+            parts.append(f"[USER]\n{body}")
+        else:
+            last = messages[-1]
+            body = _content_to_str(last.get("content"))
+            parts.append(f"[{last.get('role', 'user').upper()}]\n{body}")
+
+    if include_tools:
+        parts.append(
+            "\n[RAPPEL] Action système → JSON tool_calls. Sinon → texte clair."
+        )
+
+    text = "\n\n".join(p for p in parts if p and str(p).strip())
+    max_chars = int(os.environ.get("NEMAPI_MAX_PROMPT", "24000"))
+    if len(text) > max_chars:
+        text = (
+            text[: max_chars // 5]
+            + f"\n\n[... tronqué {len(text)}→{max_chars} ...]\n\n"
+            + text[-(4 * max_chars // 5) :]
+        )
+    return text
+
+
+# Compat alias
+def pack_messages_for_browser(
+    messages: List[Dict[str, Any]],
+    tools: Optional[List[Dict[str, Any]]] = None,
+    tool_choice: Any = "auto",
+) -> str:
+    return pack_delta_for_browser(
+        messages, tools=tools, tool_choice=tool_choice, include_system=True
+    )
+
+
+# ═══════════════════════════════════════════════════════════
+# Fichiers (OpenAI-style content parts + /v1/files)
+# ═══════════════════════════════════════════════════════════
+
+_MAX_FILE_BYTES = int(os.environ.get("NEMAPI_MAX_FILE_BYTES", str(12 * 1024 * 1024)))
+_MAX_FILES_PER_JOB = int(os.environ.get("NEMAPI_MAX_FILES", "5"))
+
+
+def _guess_mime(name: str, fallback: str = "application/octet-stream") -> str:
+    mime, _ = mimetypes.guess_type(name or "")
+    return mime or fallback
+
+
+def _normalize_file_entry(raw: Dict[str, Any], idx: int = 0) -> Optional[Dict[str, str]]:
+    """Normalise un fichier vers {name, mime, content_base64}."""
+    if not isinstance(raw, dict):
+        return None
+    name = (
+        raw.get("name")
+        or raw.get("filename")
+        or raw.get("file_name")
+        or f"file_{idx}.bin"
+    )
+    mime = raw.get("mime") or raw.get("type") or raw.get("content_type") or ""
+    b64 = (
+        raw.get("content_base64")
+        or raw.get("base64")
+        or raw.get("data")
+        or raw.get("content")
+        or ""
+    )
+    # data URL : data:mime;base64,....
+    if isinstance(b64, str) and b64.startswith("data:") and "," in b64:
+        header, b64 = b64.split(",", 1)
+        if ";base64" in header and ":" in header:
+            mime = mime or header.split(":")[1].split(";")[0]
+    if not b64 or not isinstance(b64, str):
+        return None
+    b64 = re.sub(r"\s+", "", b64)
+    try:
+        raw_bytes = base64.b64decode(b64, validate=False)
+    except Exception:
+        return None
+    if len(raw_bytes) > _MAX_FILE_BYTES:
+        raise ValueError(
+            f"Fichier trop volumineux: {name} ({len(raw_bytes)} > {_MAX_FILE_BYTES} octets)"
+        )
+    if not mime:
+        mime = _guess_mime(str(name))
+    return {
+        "name": str(name),
+        "mime": str(mime),
+        "content_base64": base64.b64encode(raw_bytes).decode("ascii"),
+    }
+
+
+def extract_files_from_messages(
+    messages: List[Dict[str, Any]],
+) -> List[Dict[str, str]]:
+    """Extrait fichiers depuis content parts OpenAI (image_url, file, input_file)."""
+    out: List[Dict[str, str]] = []
+    for msg in messages or []:
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            ptype = (part.get("type") or "").lower()
+            entry: Optional[Dict[str, Any]] = None
+            if ptype in ("image_url", "input_image"):
+                img = part.get("image_url") or part.get("image") or {}
+                if isinstance(img, str):
+                    url = img
+                else:
+                    url = (img or {}).get("url") or ""
+                if isinstance(url, str) and url.startswith("data:"):
+                    entry = {
+                        "name": part.get("name") or f"image_{len(out)}.png",
+                        "content": url,
+                    }
+            elif ptype in ("file", "input_file", "document"):
+                fobj = part.get("file") or part
+                entry = {
+                    "name": fobj.get("filename")
+                    or fobj.get("name")
+                    or part.get("name")
+                    or f"file_{len(out)}.bin",
+                    "mime": fobj.get("mime") or fobj.get("content_type"),
+                    "content_base64": fobj.get("file_data")
+                    or fobj.get("content_base64")
+                    or fobj.get("data"),
+                }
+                # parfois file_data est data URL
+                fd = entry.get("content_base64")
+                if not fd and isinstance(fobj.get("file_data"), str):
+                    entry["content_base64"] = fobj["file_data"]
+            if entry:
+                try:
+                    norm = _normalize_file_entry(entry, len(out))
+                except ValueError as e:
+                    raise
+                if norm:
+                    out.append(norm)
+            if len(out) >= _MAX_FILES_PER_JOB:
+                return out
+    return out
+
+
+def extract_files_from_payload(payload: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Fichiers depuis body : nemapi_files, files, ou messages."""
+    out: List[Dict[str, str]] = []
+    for key in ("nemapi_files", "files", "attachments"):
+        block = payload.get(key)
+        if not isinstance(block, list):
+            continue
+        for i, raw in enumerate(block):
+            if isinstance(raw, dict):
+                norm = _normalize_file_entry(raw, i)
+                if norm:
+                    out.append(norm)
+            if len(out) >= _MAX_FILES_PER_JOB:
+                return out
+    # messages OpenAI multi-part
+    try:
+        from_msgs = extract_files_from_messages(payload.get("messages") or [])
+    except ValueError:
+        raise
+    for f in from_msgs:
+        if len(out) >= _MAX_FILES_PER_JOB:
+            break
+        # dédup par nom+taille approx
+        if not any(x["name"] == f["name"] and x["mime"] == f["mime"] for x in out):
+            out.append(f)
+    return out
+
+
+def extract_tool_calls(text: str) -> Tuple[Optional[str], List[Dict[str, Any]]]:
+    """Extrait tool_calls OpenAI depuis texte libre / markdown / XML."""
+    if not text or not text.strip():
+        return text, []
+
+    def _fix(blob: str) -> str:
+        blob = re.sub(r",\s*}", "}", blob)
+        blob = re.sub(r",\s*]", "]", blob)
+        return blob
+
+    def _items_from_data(data: Any) -> List[Dict[str, Any]]:
+        items: List[Any] = []
+        if isinstance(data, dict):
+            if "tool_calls" in data:
+                items = data["tool_calls"] or []
+            elif "tools" in data and isinstance(data["tools"], list):
+                items = data["tools"]
+            elif "name" in data or "function" in data:
+                items = [data]
+            elif "tool" in data and isinstance(data["tool"], str):
+                items = [
+                    {
+                        "name": data["tool"],
+                        "arguments": data.get("arguments")
+                        or data.get("params")
+                        or {},
+                    }
+                ]
+        elif isinstance(data, list):
+            items = data
+        out: List[Dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if "function" in item and isinstance(item["function"], dict):
+                fn = item["function"]
+                name = fn.get("name", "")
+                args = fn.get("arguments", {})
+            else:
+                name = item.get("name") or item.get("tool") or ""
+                args = item.get(
+                    "arguments", item.get("parameters", item.get("params", {}))
+                )
+            if not name:
+                continue
+            name = str(name).strip()
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except json.JSONDecodeError:
+                    args = {"_raw": args}
+            if not isinstance(args, dict):
+                args = {"value": args}
+            tid = item.get("id") or f"call_{uuid.uuid4().hex[:12]}"
+            out.append(
+                {
+                    "id": tid,
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "arguments": json.dumps(args, ensure_ascii=False),
+                    },
+                }
+            )
+        return out
+
+    def _try_parse(blob: str) -> List[Dict[str, Any]]:
+        for candidate in (blob, _fix(blob)):
+            try:
+                data = json.loads(candidate)
+                found = _items_from_data(data)
+                if found:
+                    return found
+            except json.JSONDecodeError:
+                continue
+        return []
+
+    for m in re.finditer(
+        r"<(?:tool_call|tool_calls|function_call)\b[^>]*>([\s\S]*?)</(?:tool_call|tool_calls|function_call)>",
+        text,
+        re.I,
+    ):
+        found = _try_parse(m.group(1).strip())
+        if found:
+            cleaned = re.sub(r"\n{3,}", "\n\n", (text[: m.start()] + text[m.end() :]).strip())
+            return cleaned or None, found
+
+    for m in re.finditer(r"```(?:json|JSON)?\s*([\s\S]*?)```", text):
+        found = _try_parse(m.group(1).strip())
+        if found:
+            cleaned = re.sub(
+                r"\n{3,}", "\n\n", (text[: m.start()] + text[m.end() :]).strip()
+            )
+            return cleaned or None, found
+
+    stripped = text.strip()
+    if stripped.startswith("{") or stripped.startswith("["):
+        found = _try_parse(stripped)
+        if found:
+            return None, found
+
+    start = text.find("{")
+    while start != -1:
+        depth = 0
+        in_str = False
+        esc = False
+        for i in range(start, len(text)):
+            ch = text[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    blob = text[start : i + 1]
+                    if any(
+                        k in blob
+                        for k in (
+                            "tool_calls",
+                            '"name"',
+                            '"tool"',
+                            "run_bash",
+                            "write_file",
+                            "read_file",
+                        )
+                    ):
+                        found = _try_parse(blob)
+                        if found:
+                            cleaned = (text[:start] + text[i + 1 :]).strip()
+                            return cleaned or None, found
+                    break
+        start = text.find("{", start + 1)
+
+    return text, []
+
+
+# ═══════════════════════════════════════════════════════════
+# HTTP
+# ═══════════════════════════════════════════════════════════
+
+async def read_http_request(
+    reader: asyncio.StreamReader,
+    max_body: int = int(os.environ.get("NEMAPI_MAX_BODY", str(20 * 1024 * 1024))),
+) -> Tuple[Optional[str], Optional[str], Dict[str, str], bytes, Dict[str, str]]:
+    header_data = b""
+    while b"\r\n\r\n" not in header_data and b"\n\n" not in header_data:
+        chunk = await asyncio.wait_for(reader.read(4096), timeout=60)
+        if not chunk:
+            break
+        header_data += chunk
+        if len(header_data) > 65536:
+            break
+
+    if not header_data:
+        return None, None, {}, b"", {}
+
+    sep = b"\r\n\r\n" if b"\r\n\r\n" in header_data else b"\n\n"
+    if sep in header_data:
+        head, rest = header_data.split(sep, 1)
+    else:
+        head, rest = header_data, b""
+
+    try:
+        head_text = head.decode("utf-8", errors="replace")
+    except Exception:
+        return None, None, {}, b"", {}
+
+    lines = head_text.split("\n")
+    if not lines:
+        return None, None, {}, b"", {}
+
+    first = lines[0].strip().split(" ")
+    if len(first) < 2:
+        return None, None, {}, b"", {}
+    method, full_path = first[0], first[1]
+    parsed = urlparse(full_path)
+    path = parsed.path or "/"
+    params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+
+    headers: Dict[str, str] = {}
+    for line in lines[1:]:
+        line = line.strip("\r")
+        if ":" in line:
+            k, v = line.split(":", 1)
+            headers[k.strip().lower()] = v.strip()
+
+    content_length = int(headers.get("content-length", "0") or "0")
+    body = rest
+    if content_length > 0:
+        if content_length > max_body:
+            content_length = max_body
+        while len(body) < content_length:
+            need = content_length - len(body)
+            chunk = await asyncio.wait_for(
+                reader.read(min(need, 65536)), timeout=120
+            )
+            if not chunk:
+                break
+            body += chunk
+        body = body[:content_length]
+
+    ctype = headers.get("content-type", "")
+    if method == "POST" and body and "application/x-www-form-urlencoded" in ctype:
+        try:
+            form = parse_qs(body.decode("utf-8", errors="replace"), keep_blank_values=True)
+            for k, v in form.items():
+                params[k] = v[0] if v else ""
+        except Exception:
+            pass
+
+    return method, path, params, body, headers
+
+
+def build_response(status: int, body: Any, content_type: str = "application/json") -> bytes:
+    status_msgs = {
+        200: "OK",
+        400: "Bad Request",
+        404: "Not Found",
+        405: "Method Not Allowed",
+        500: "Internal Server Error",
+        502: "Bad Gateway",
+        503: "Service Unavailable",
+    }
+    msg = status_msgs.get(status, "OK")
+    if isinstance(body, (dict, list)):
+        body_bytes = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        content_type = "application/json"
+    elif isinstance(body, str):
+        body_bytes = body.encode("utf-8")
+    else:
+        body_bytes = body or b""
+
+    headers = (
+        f"HTTP/1.1 {status} {msg}\r\n"
+        f"Content-Type: {content_type}; charset=utf-8\r\n"
+        f"Content-Length: {len(body_bytes)}\r\n"
+        "Access-Control-Allow-Origin: *\r\n"
+        "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
+        "Access-Control-Allow-Headers: Content-Type, Authorization, X-NEMAPI-New-Chat\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+    )
+    return headers.encode("utf-8") + body_bytes
+
+
+# ═══════════════════════════════════════════════════════════
+# Handlers
+# ═══════════════════════════════════════════════════════════
+
+async def handle_poll_jobs() -> Tuple[int, Any, str]:
+    job = await jobs_manager.get_pending_job()
+    if job:
+        return (
+            200,
+            {
+                "action": "ask",
+                "jobId": job["id"],
+                "question": job["text"],
+                "text": job["text"],
+                "mode": job["mode"],
+                "meta": job.get("meta") or {},
+            },
+            "application/json",
+        )
+    return 200, {"action": "idle"}, "application/json"
+
+
+async def handle_post_result(
+    params: Dict[str, str], body: bytes = b"", headers: Optional[Dict[str, str]] = None
+) -> Tuple[int, Any, str]:
+    headers = headers or {}
+    ctype = headers.get("content-type", "")
+    if body and "application/json" in ctype:
+        try:
+            data = json.loads(body.decode("utf-8", errors="replace"))
+            if isinstance(data, dict):
+                for k, v in data.items():
+                    if v is None:
+                        continue
+                    if k == "result" and not isinstance(v, str):
+                        params[k] = json.dumps(v, ensure_ascii=False)
+                    else:
+                        params[k] = v if isinstance(v, str) else str(v)
+        except json.JSONDecodeError:
+            pass
+
+    job_id = params.get("jobId") or params.get("job_id")
+    action = params.get("action", "result")
+    if not job_id:
+        return 400, "jobId manquant", "text/plain"
+    if action == "result":
+        await jobs_manager.set_result(job_id, params.get("result", ""))
+    elif action in ("error", "stopped"):
+        err = params.get("error") or params.get("result") or "Erreur"
+        await jobs_manager.set_error(job_id, err if action == "error" else "ANNULÉ")
+    else:
+        return 400, "Action inconnue", "text/plain"
+    return 200, "OK", "text/plain"
+
+
+def _want_new_chat(payload: Dict[str, Any], headers: Dict[str, str]) -> bool:
+    if headers.get("x-nemapi-new-chat", "").lower() in ("1", "true", "yes"):
+        return True
+    if payload.get("nemapi_new_chat") or payload.get("new_chat"):
+        return True
+    # convention OpenAI metadata
+    meta = payload.get("metadata") or {}
+    if isinstance(meta, dict) and meta.get("new_chat"):
+        return True
+    return False
+
+
+async def handle_chat_completions(
+    body: bytes, headers: Optional[Dict[str, str]] = None
+) -> Tuple[int, Any, str]:
+    headers = headers or {}
+    try:
+        payload = json.loads(body.decode("utf-8") if body else "{}")
+    except json.JSONDecodeError as e:
+        return (
+            400,
+            {
+                "error": {
+                    "message": f"JSON invalide: {e}",
+                    "type": "invalid_request_error",
+                }
+            },
+            "application/json",
+        )
+
+    messages = payload.get("messages") or []
+    model = payload.get("model") or "deepseek-web"
+    tools = payload.get("tools")
+    tool_choice = payload.get("tool_choice", "auto")
+    stream = payload.get("stream", False)
+
+    if stream:
+        return (
+            400,
+            {
+                "error": {
+                    "message": "stream non supporté par le bridge navigateur",
+                    "type": "invalid_request_error",
+                }
+            },
+            "application/json",
+        )
+
+    try:
+        files = extract_files_from_payload(payload)
+    except ValueError as e:
+        return (
+            400,
+            {"error": {"message": str(e), "type": "invalid_request_error"}},
+            "application/json",
+        )
+
+    if not messages and not files:
+        return (
+            400,
+            {
+                "error": {
+                    "message": "messages requis (ou fichiers via nemapi_files)",
+                    "type": "invalid_request_error",
+                }
+            },
+            "application/json",
+        )
+
+    if _want_new_chat(payload, headers):
+        browser_session.reset()
+        print(f"[SESSION] reset → {browser_session.id[:8]}")
+
+    # Toujours send via le composer. System + tools seed une fois par session.
+    mode = "send"
+    include_system = not browser_session.system_seeded
+
+    text = ""
+    if messages:
+        text = pack_delta_for_browser(
+            messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            include_system=include_system,
+            session=browser_session,
+        )
+    if files and not text.strip():
+        names = ", ".join(f["name"] for f in files)
+        text = (
+            f"[USER]\nAnalyse le(s) fichier(s) joint(s) : {names}. "
+            "Résume le contenu et les points importants."
+        )
+
+    print(
+        f"[OPENAI] chat mode={mode} msgs={len(messages)} "
+        f"tools={len(tools or [])} chars={len(text)} files={len(files)} "
+        f"session={browser_session.id[:8]}"
+    )
+
+    job_id = await jobs_manager.create_job(
+        text,
+        mode=mode,
+        meta={
+            "session_id": browser_session.id,
+            "turn": browser_session.turn_count + 1,
+            "include_system": include_system,
+            "files": files,
+        },
+    )
+    browser_session.last_job_id = job_id
+    browser_session.last_user_blob = text
+
+    timeout = float(os.environ.get("NEMAPI_TIMEOUT", "600"))
+    outcome = await jobs_manager.wait_job(job_id, timeout=timeout)
+
+    if outcome["status"] == "error":
+        return (
+            502,
+            {
+                "error": {
+                    "message": outcome.get("result") or "Erreur bridge",
+                    "type": "bridge_error",
+                    "session_id": browser_session.id,
+                    "mode": mode,
+                }
+            },
+            "application/json",
+        )
+
+    raw = outcome.get("result") or ""
+    content, tool_calls = extract_tool_calls(raw)
+
+    # Session OK
+    browser_session.has_sent_user_message = True
+    if include_system:
+        browser_session.system_seeded = True
+    browser_session.turn_count += 1
+    browser_session.last_assistant = content or raw
+
+    message: Dict[str, Any] = {"role": "assistant", "content": content}
+    finish_reason = "stop"
+    if tool_calls:
+        message["tool_calls"] = tool_calls
+        if not content:
+            message["content"] = None
+        finish_reason = "tool_calls"
+
+    response = {
+        "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": model,
+        "choices": [
+            {
+                "index": 0,
+                "message": message,
+                "finish_reason": finish_reason,
+            }
+        ],
+        "usage": {
+            "prompt_tokens": max(1, len(text) // 4),
+            "completion_tokens": max(1, len(raw) // 4),
+            "total_tokens": max(1, (len(text) + len(raw)) // 4),
+        },
+        "nemapi": {
+            "session_id": browser_session.id,
+            "mode": mode,
+            "turn": browser_session.turn_count,
+            "files": [f["name"] for f in files],
+        },
+    }
+    print(
+        f"[OPENAI] → finish={finish_reason} tools={len(tool_calls)} "
+        f"mode={mode} turn={browser_session.turn_count} files={len(files)}"
+    )
+    return 200, response, "application/json"
+
+
+async def handle_files(
+    body: bytes, headers: Optional[Dict[str, str]] = None
+) -> Tuple[int, Any, str]:
+    """POST /v1/files — attache des fichiers à DeepSeek, optionnellement pose une question.
+
+    Body JSON :
+      {
+        "files": [{"name":"a.pdf","content_base64":"...","mime":"application/pdf"}],
+        "prompt": "Résume ce document",   // optionnel
+        "upload_only": false,             // true = attach sans envoyer
+        "model": "deepseek-web"
+      }
+
+    Ou un seul fichier :
+      {"name":"a.pdf","content_base64":"...","prompt":"..."}
+    """
+    headers = headers or {}
+    try:
+        payload = json.loads(body.decode("utf-8") if body else "{}")
+    except json.JSONDecodeError as e:
+        return (
+            400,
+            {"error": {"message": f"JSON invalide: {e}", "type": "invalid_request_error"}},
+            "application/json",
+        )
+
+    if not isinstance(payload, dict):
+        return (
+            400,
+            {"error": {"message": "objet JSON requis", "type": "invalid_request_error"}},
+            "application/json",
+        )
+
+    # Normaliser liste files
+    if "files" not in payload and (
+        payload.get("content_base64") or payload.get("base64") or payload.get("data")
+    ):
+        payload = {
+            "files": [payload],
+            "prompt": payload.get("prompt") or payload.get("question") or "",
+            "upload_only": payload.get("upload_only", False),
+            "model": payload.get("model") or "deepseek-web",
+        }
+
+    try:
+        files = extract_files_from_payload(payload)
+    except ValueError as e:
+        return (
+            400,
+            {"error": {"message": str(e), "type": "invalid_request_error"}},
+            "application/json",
+        )
+
+    if not files:
+        return (
+            400,
+            {
+                "error": {
+                    "message": "Aucun fichier (files[].content_base64 requis)",
+                    "type": "invalid_request_error",
+                }
+            },
+            "application/json",
+        )
+
+    prompt = (
+        payload.get("prompt")
+        or payload.get("question")
+        or payload.get("message")
+        or ""
+    )
+    upload_only = bool(payload.get("upload_only") or payload.get("uploadOnly"))
+    model = payload.get("model") or "deepseek-web"
+
+    if not upload_only and not str(prompt).strip():
+        names = ", ".join(f["name"] for f in files)
+        prompt = (
+            f"Analyse le(s) fichier(s) joint(s) : {names}. "
+            "Résume le contenu et les points importants."
+        )
+
+    text = f"[USER]\n{prompt}" if str(prompt).strip() else ""
+
+    print(
+        f"[FILES] attach={len(files)} upload_only={upload_only} "
+        f"prompt_chars={len(prompt)} session={browser_session.id[:8]}"
+    )
+    for f in files:
+        approx = len(f["content_base64"]) * 3 // 4
+        print(f"[FILES]   · {f['name']} ({f['mime']}, ~{approx} o)")
+
+    job_id = await jobs_manager.create_job(
+        text,
+        mode="send",
+        meta={
+            "session_id": browser_session.id,
+            "files": files,
+            "upload_only": upload_only,
+            "kind": "files",
+        },
+    )
+    browser_session.last_job_id = job_id
+    browser_session.last_user_blob = text or f"[files:{len(files)}]"
+
+    timeout = float(os.environ.get("NEMAPI_TIMEOUT", "600"))
+    outcome = await jobs_manager.wait_job(job_id, timeout=timeout)
+
+    if outcome["status"] == "error":
+        return (
+            502,
+            {
+                "error": {
+                    "message": outcome.get("result") or "Erreur bridge fichiers",
+                    "type": "bridge_error",
+                    "session_id": browser_session.id,
+                }
+            },
+            "application/json",
+        )
+
+    raw = outcome.get("result") or ""
+    browser_session.has_sent_user_message = True
+    if not upload_only:
+        browser_session.turn_count += 1
+        browser_session.last_assistant = raw
+
+    # Si résultat JSON d'upload seul
+    parsed_upload = None
+    if upload_only:
+        try:
+            parsed_upload = json.loads(raw)
+        except Exception:
+            parsed_upload = {"ok": True, "raw": raw}
+
+    if upload_only:
+        return (
+            200,
+            {
+                "id": f"file-{uuid.uuid4().hex[:12]}",
+                "object": "nemapi.file_upload",
+                "created": int(time.time()),
+                "model": model,
+                "files": [{"name": f["name"], "mime": f["mime"]} for f in files],
+                "upload": parsed_upload,
+                "nemapi": {
+                    "session_id": browser_session.id,
+                    "upload_only": True,
+                },
+            },
+            "application/json",
+        )
+
+    content, tool_calls = extract_tool_calls(raw)
+    message: Dict[str, Any] = {"role": "assistant", "content": content}
+    finish_reason = "stop"
+    if tool_calls:
+        message["tool_calls"] = tool_calls
+        if not content:
+            message["content"] = None
+        finish_reason = "tool_calls"
+
+    return (
+        200,
+        {
+            "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": message,
+                    "finish_reason": finish_reason,
+                }
+            ],
+            "usage": {
+                "prompt_tokens": max(1, len(text) // 4),
+                "completion_tokens": max(1, len(raw) // 4),
+                "total_tokens": max(1, (len(text) + len(raw)) // 4),
+            },
+            "nemapi": {
+                "session_id": browser_session.id,
+                "mode": "send",
+                "turn": browser_session.turn_count,
+                "files": [f["name"] for f in files],
+                "kind": "files",
+            },
+        },
+        "application/json",
+    )
+
+
+def handle_models() -> Tuple[int, Any, str]:
+    now = int(time.time())
+    return (
+        200,
+        {
+            "object": "list",
+            "data": [
+                {
+                    "id": "deepseek-web",
+                    "object": "model",
+                    "created": now,
+                    "owned_by": "nemapi-bridge",
+                },
+                {
+                    "id": "nemapi-bridge",
+                    "object": "model",
+                    "created": now,
+                    "owned_by": "nemapi-bridge",
+                },
+            ],
+        },
+        "application/json",
+    )
+
+
+def handle_session_get() -> Tuple[int, Any, str]:
+    return 200, {"session": browser_session.to_dict()}, "application/json"
+
+
+async def handle_session_reset() -> Tuple[int, Any, str]:
+    browser_session.reset()
+    print(f"[SESSION] reset API → {browser_session.id[:8]}")
+    return (
+        200,
+        {
+            "ok": True,
+            "session": browser_session.to_dict(),
+            "hint": "Cliquez « Nouveau chat » dans DeepSeek ou l'extension le fera au prochain send.",
+        },
+        "application/json",
+    )
+
+
+def handle_index() -> Tuple[int, Any, str]:
+    html = """<!DOCTYPE html>
+<html lang="fr"><head><meta charset="UTF-8"><title>NEMAPI Bridge</title>
+<style>
+body{font-family:system-ui,sans-serif;background:#0f1117;color:#e6e6e6;margin:0;padding:2rem}
+code,pre{background:#1a1d27;padding:.2rem .5rem;border-radius:6px}
+.card{background:#161922;border:1px solid #2a2f3a;border-radius:12px;padding:1.25rem;margin:1rem 0;max-width:760px}
+h1{color:#7c9cff;margin:0 0 .5rem}
+.tag{display:inline-block;background:#1e3a5f;color:#7dd3fc;padding:.15rem .5rem;border-radius:4px;font-size:.85rem}
+</style></head><body>
+<h1>NEMAPI Bridge v2.4 — Send + delta + files</h1>
+<p>Proxy OpenAI pour NEMESIS · fil DeepSeek · <span class="tag">send</span> · <span class="tag">files</span></p>
+<div class="card">
+  <h3>Flux</h3>
+  <ol>
+    <li>Packer le <b>delta</b> (dernier message, pas tout l'historique)</li>
+    <li>Optionnel : attacher fichiers via UI DeepSeek</li>
+    <li><b>send</b> — composer + attendre le <b>dernier</b> assistant (pas le plus long)</li>
+    <li><code>POST /v1/sessions/reset</code> + Nouveau chat DeepSeek si fil neuf</li>
+  </ol>
+</div>
+<div class="card">
+  <h3>Endpoints</h3>
+  <p><code>POST /v1/chat/completions</code> — texte (+ <code>nemapi_files</code> ou content parts)</p>
+  <p><code>POST /v1/files</code> — upload / analyse fichiers</p>
+  <p><code>GET  /v1/models</code> · <code>GET /v1/session</code></p>
+  <p><code>POST /v1/sessions/reset</code></p>
+  <p><code>GET/POST /job</code> — extension</p>
+</div>
+</body></html>"""
+    return 200, html, "text/html"
+
+
+async def handle_ask(params: Dict[str, str]) -> Tuple[int, Any, str]:
+    question = params.get("q") or params.get("question") or ""
+    if not question:
+        return 400, "Paramètre q manquant", "text/plain"
+    job_id = await jobs_manager.create_job(question, mode="send")
+    return 200, job_id, "text/plain"
+
+
+async def handle_result(params: Dict[str, str]) -> Tuple[int, Any, str]:
+    job_id = params.get("id")
+    if not job_id:
+        return 400, "id manquant", "text/plain"
+    job = jobs_manager.get_job(job_id)
+    if not job:
+        return 404, "Job introuvable", "text/plain"
+    if job["status"] in ("pending", "in_progress"):
+        return 200, "STILL_WORKING", "text/plain"
+    if job["status"] == "completed":
+        return 200, job.get("result") or "", "text/plain"
+    return 500, job.get("result") or "Erreur", "text/plain"
+
+
+async def route(
+    method: str,
+    path: str,
+    params: Dict[str, str],
+    body: bytes,
+    headers: Optional[Dict[str, str]] = None,
+) -> Tuple[int, Any, str]:
+    headers = headers or {}
+    if method == "OPTIONS":
+        return 200, "", "text/plain"
+
+    if path == "/job" and method == "GET":
+        return await handle_poll_jobs()
+    if path == "/job" and method == "POST":
+        return await handle_post_result(params, body=body, headers=headers)
+
+    if path in ("/v1/chat/completions", "/chat/completions") and method == "POST":
+        return await handle_chat_completions(body, headers=headers)
+    if path in ("/v1/files", "/files", "/v1/files/analyze", "/files/analyze") and method == "POST":
+        return await handle_files(body, headers=headers)
+    if path in ("/v1/models", "/models") and method == "GET":
+        return handle_models()
+
+    if path in ("/v1/session", "/session") and method == "GET":
+        return handle_session_get()
+    if path in ("/v1/sessions/reset", "/sessions/reset", "/v1/session/reset") and method == "POST":
+        return await handle_session_reset()
+
+    if path in ("/health", "/status") and method == "GET":
+        return (
+            200,
+            {
+                "status": "ok",
+                "service": "nemapi-bridge-openai",
+                "version": "2.4",
+                "features": ["send", "delta", "files"],
+                "session": browser_session.to_dict(),
+            },
+            "application/json",
+        )
+
+    if path == "/stop" and method == "GET":
+        await jobs_manager.cancel_all()
+        return 200, "STOP_SENT", "text/plain"
+
+    if path == "/ask" and method in ("GET", "POST"):
+        return await handle_ask(params)
+    if path == "/result" and method == "GET":
+        return await handle_result(params)
+
+    if path == "/" and method == "GET":
+        return handle_index()
+
+    return 404, {"error": {"message": f"Not Found: {path}"}}, "application/json"
+
+
+async def handle_client(
+    reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+) -> None:
+    try:
+        method, path, params, body, headers = await read_http_request(reader)
+        if method is None:
+            writer.close()
+            return
+        print(f"[HTTP] {method} {path} body={len(body)}")
+        status, resp_body, ctype = await route(
+            method, path, params, body, headers=headers
+        )
+        if isinstance(resp_body, (dict, list)):
+            data = build_response(status, resp_body, "application/json")
+        else:
+            data = build_response(status, resp_body, ctype)
+        writer.write(data)
+        await writer.drain()
+    except asyncio.TimeoutError:
+        try:
+            writer.write(
+                build_response(
+                    500,
+                    {"error": {"message": "Timeout lecture requête"}},
+                    "application/json",
+                )
+            )
+            await writer.drain()
+        except Exception:
+            pass
+    except Exception as e:
+        print(f"[HTTP] Erreur: {e}")
+        try:
+            writer.write(
+                build_response(
+                    500, {"error": {"message": str(e)}}, "application/json"
+                )
+            )
+            await writer.drain()
+        except Exception:
+            pass
+    finally:
+        try:
+            writer.close()
+            await writer.wait_closed()
+        except Exception:
+            pass
+
+
+async def main() -> None:
+    host = os.environ.get("NEMAPI_HOST", "0.0.0.0")
+    port = int(os.environ.get("NEMAPI_PORT", os.environ.get("PORT", "8080")))
+
+    local_ip = "127.0.0.1"
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        pass
+
+    server = await asyncio.start_server(handle_client, host, port)
+    print("=" * 60)
+    print("  NEMAPI Bridge v2.4 — OpenAI + send (delta) + files")
+    print("=" * 60)
+    print(f"  Local   : http://127.0.0.1:{port}")
+    print(f"  Réseau  : http://{local_ip}:{port}")
+    print(f"  OpenAI  : http://127.0.0.1:{port}/v1")
+    print(f"  Files   : POST /v1/files  (attach + analyse)")
+    print(f"  Session : GET /v1/session · POST /v1/sessions/reset")
+    print(f"  Jobs    : send · fichiers UI · contexte DeepSeek")
+    print("=" * 60)
+
+    async with server:
+        await server.serve_forever()
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nArrêt.")

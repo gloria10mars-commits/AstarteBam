@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🧮 Calculatrice</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{display:flex;justify-content:center;align-items:center;min-height:100vh;background:#1a1a2e;font-family:system-ui,sans-serif}
+.calc{background:#16213e;border-radius:20px;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.5);width:320px}
+.ecran{background:#0f3460;color:#e94560;font-size:2.5rem;text-align:right;padding:20px;border-radius:12px;margin-bottom:20px;min-height:80px;word-break:break-all;font-weight:300;letter-spacing:1px}
+.grille{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+button{padding:18px;font-size:1.2rem;border:none;border-radius:12px;cursor:pointer;font-weight:600;transition:all .15s}
+button:active{transform:scale(.95)}
+.chiffre{background:#1a1a2e;color:#eee}
+.chiffre:hover{background:#0f3460}
+.ops{background:#e94560;color:#fff}
+.ops:hover{background:#c23152}
+.egal{background:#0f3460;color:#e94560;grid-column:span 2}
+.egal:hover{background:#1a3a6e}
+.clear{background:#533483;color:#fff}
+.clear:hover{background:#3b1f6e}
+</style>
+</head>
+<body>
+<div class="calc">
+<div class="ecran" id="ecran">0</div>
+<div class="grille">
+<button class="clear" onclick="clearAll()">C</button>
+<button class="ops" onclick="del()">⌫</button>
+<button class="ops" onclick="op('/')">/</button>
+<button class="ops" onclick="op('*')">×</button>
+<button class="chiffre" onclick="num('7')">7</button>
+<button class="chiffre" onclick="num('8')">8</button>
+<button class="chiffre" onclick="num('9')">9</button>
+<button class="ops" onclick="op('-')">−</button>
+<button class="chiffre" onclick="num('4')">4</button>
+<button class="chiffre" onclick="num('5')">5</button>
+<button class="chiffre" onclick="num('6')">6</button>
+<button class="ops" onclick="op('+')">+</button>
+<button class="chiffre" onclick="num('1')">1</button>
+<button class="chiffre" onclick="num('2')">2</button>
+<button class="chiffre" onclick="num('3')">3</button>
+<button class="egal" onclick="calc()">=</button>
+<button class="chiffre" onclick="num('0')" style="grid-column:span 2">0</button>
+<button class="chiffre" onclick="num('.')">.</button>
+</div>
+</div>
+<script>
+let expr='';
+const e=document.getElementById('ecran');
+function num(n){expr+=n;e.textContent=expr||'0'}
+function op(o){expr+=o;e.textContent=expr}
+function calc(){try{expr=eval(expr).toString();e.textContent=expr}catch(_){e.textContent='Erreur';expr=''}}
+function clearAll(){expr='';e.textContent='0'}
+function del(){expr=expr.slice(0,-1);e.textContent=expr||'0'}
+</script>
+</body>
+</html>

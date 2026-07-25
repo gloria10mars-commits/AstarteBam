@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>NEMAPI Bridge</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 16px;
+      user-select: none;
+    }
+    .titlebar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #334155;
+    }
+    .titlebar h2 { font-size: 14px; color: #38bdf8; }
+    .titlebar-buttons { display: flex; gap: 6px; }
+    .titlebar-btn {
+      width: 12px; height: 12px; border-radius: 50%; border: none; cursor: pointer;
+    }
+    .btn-minimize { background: #FFC107; }
+    .btn-close { background: #F44336; }
+    .status-row {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 14px; padding: 10px;
+      background: #1e293b; border-radius: 8px;
+    }
+    .status-dot { font-size: 14px; }
+    .status-on { color: #4CAF50; }
+    .status-off { color: #F44336; }
+    .status-text { font-size: 13px; color: #94a3b8; }
+    .section {
+      background: #1e293b; border-radius: 10px;
+      padding: 12px; margin-bottom: 12px;
+      border: 1px solid #334155;
+    }
+    .section h3 {
+      font-size: 11px; text-transform: uppercase;
+      letter-spacing: .06em; color: #64748b; margin-bottom: 10px;
+    }
+    .info { font-size: 12px; color: #cbd5e1; word-break: break-all; margin-bottom: 8px; }
+    .btn {
+      display: block; width: 100%; padding: 10px 12px;
+      margin-bottom: 8px; border: none; border-radius: 8px;
+      font-size: 13px; font-weight: 600; cursor: pointer;
+      background: #0369a1; color: #f8fafc;
+    }
+    .btn:hover { background: #0284c7; }
+    .btn.secondary { background: #334155; }
+    .btn.secondary:hover { background: #475569; }
+    .btn.warn { background: #9a3412; }
+    .btn.warn:hover { background: #c2410c; }
+    #log {
+      font-size: 11px; color: #94a3b8; min-height: 40px;
+      font-family: ui-monospace, monospace;
+      white-space: pre-wrap;
+    }
+    .badge {
+      display: inline-block; font-size: 10px; padding: 2px 6px;
+      border-radius: 4px; background: #1e3a5f; color: #7dd3fc;
+      margin-left: 6px;
+    }
+  </style>
+</head>
+<body>
+  <div class="titlebar">
+    <h2>NEMAPI Bridge <span class="badge">v2.3</span></h2>
+    <div class="titlebar-buttons">
+      <button class="titlebar-btn btn-minimize" id="btn-minimize" title="Réduire"></button>
+      <button class="titlebar-btn btn-close" id="btn-close" title="Fermer"></button>
+    </div>
+  </div>
+
+  <div class="status-row">
+    <span id="status-dot" class="status-dot status-off">●</span>
+    <span id="status-label" class="status-text">Déconnecté</span>
+  </div>
+
+  <div class="section">
+    <h3>Onglet DeepSeek</h3>
+    <div class="info" id="target-tab-info">Non défini</div>
+    <button class="btn" id="btn-capture">Capturer onglet DeepSeek</button>
+    <button class="btn secondary" id="btn-probe">Tester DOM (composer)</button>
+  </div>
+
+  <div class="section">
+    <h3>Proxy</h3>
+    <button class="btn" id="btn-connect">Connecter au proxy</button>
+    <button class="btn warn" id="btn-reset-session">Reset session proxy</button>
+  </div>
+
+  <div class="section">
+    <h3>Journal</h3>
+    <div id="log">v2.3 · send composer · delta (pas d'historique)</div>
+  </div>
+
+  <script src="floating.js"></script>
+</body>
+</html>

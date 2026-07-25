@@ -1,0 +1,4 @@
+# Proxy OpenAI — stdlib uniquement pour proxy_openai.py
+# Optionnel pour clients de test :
+httpx>=0.27.0
+openai>=1.0.0

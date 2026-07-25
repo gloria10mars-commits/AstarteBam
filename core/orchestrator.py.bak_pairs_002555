@@ -1,0 +1,121 @@
+from .router import IntelligentRouter
+from .context_store import SharedContextStore
+from .reporting import make_report
+import json
+
+# La triche = ECRIRE un fichier frontend. Detection par EXTENSION du chemin cible
+# (args), JAMAIS par contenu : du Python qui sert du HTML mentionne ".css"/"<html"
+# et declenchait des faux positifs (plans legitimes rejetes).
+UI_EXTENSIONS = (".html", ".htm", ".css", ".js", ".jsx", ".ts", ".tsx", ".vue", ".svelte")
+UI_WRITE_TYPES = {"write_file", "write_file_b64", "append", "replace"}
+
+
+def is_ui_write(action):
+    """True si l'action ecrit un fichier frontend (.html/.css/.js...)."""
+    if not isinstance(action, dict):
+        return False
+    if action.get("type") not in UI_WRITE_TYPES:
+        return False
+    return str(action.get("args", "")).strip().lower().endswith(UI_EXTENSIONS)
+
+
+class CollaborativeOrchestrator:
+    """Orchestrateur du mode collaboratif.
+
+    - Flux standard  : questions / tâches simples (un seul agent).
+    - Flux dual-expert : projets complets. DeepSeek (nemapi) est l'architecte
+      et le codeur LOGIQUE ; l'UI est OBLIGATOIREMENT déléguée à Gemini via
+      l'action {"type": "delegate", "args": "gemini", "content": "..."}.
+    """
+
+    def __init__(self, call_agent, parse_json, max_agents=3):
+        self.call_agent, self.parse_json, self.max_agents = call_agent, parse_json, max_agents
+        self.router, self.context = IntelligentRouter(), SharedContextStore()
+
+    # ------------------------------------------------------------------
+    def run(self, task_id, prompt, task_history=""):
+        decision = self.router.route(prompt)
+        feedback = task_history if task_history else "Début de la tâche."
+
+        if decision.category == "dual_expert":
+            return self._run_dual_expert(task_id, prompt, feedback)
+        return self._run_standard(task_id, prompt, feedback, decision)
+
+    # ------------------------------------------------------------------
+    # Flux standard : une question, du diagnostic, une tâche ponctuelle.
+    # ------------------------------------------------------------------
+    def _run_standard(self, task_id, prompt, feedback, decision):
+        role = decision.roles[0] if decision.roles else "planner"
+        msg = f"""DEMANDE : {prompt}
+{feedback}
+
+Réponds en JSON d'actions. Si la demande est terminée, renvoie {{"version":1,"actions":[]}}."""
+
+        raw, provider, err = self.call_agent(msg, role)
+        if err or not raw:
+            plan = {"version": 1, "actions": []}
+            return plan, {"status": "provider_error", "category": decision.category,
+                          "summary": f"Appel IA en échec : {err}"}
+        extracted = self.parse_json(raw)
+        plan = extracted[0] if extracted else {"version": 1, "actions": []}
+        return plan, {"status": "success", "category": decision.category,
+                      "summary": decision.explanation or "Plan standard validé."}
+
+    # ------------------------------------------------------------------
+    # Flux dual-expert : DeepSeek (architecte / logique) + Gemini (UI).
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _plan_cheats(plan):
+        """True si le plan écrit des fichiers frontend sans aucune délégation à Gemini."""
+        actions = plan.get("actions", [])
+        has_ui_code = any(is_ui_write(a) for a in actions)
+        has_delegate = any(a.get("type") == "delegate" for a in actions)
+        return has_ui_code and not has_delegate
+
+    def _run_dual_expert(self, task_id, prompt, feedback):
+        msg = f"""TU ES L'ARCHITECTE. PROJET : {prompt}
+{feedback}
+
+RÈGLES INVIOLABLES :
+1. Tu DÉLÈGUES chaque FICHIER UI (.html/.css/.js) à Gemini avec le champ path
+   (délégation-vers-fichier) : {{"type": "delegate", "args": "gemini",
+   "content": "UI-EXPERT : <specs précises, ids/classes réels>. Réponds avec UN SEUL bloc ``` code.",
+   "path": "/chemin/absolu/du/fichier"}}
+   Le serveur écrit la réponse de Gemini DIRECTEMENT dans path (aucune troncature).
+   UNE délégation = UN fichier. N'écris JAMAIS ces fichiers toi-même, pas même un "petit correctif".
+2. Tu codes TOI-MÊME la LOGIQUE backend (Python, shell...) via write_file :
+   un fichier .py qui mentionne ".css" ou "<html>" est ta tâche normale, PAS de l'UI.
+3. Réponds en JSON v2 uniquement."""
+
+        raw, provider, err = self.call_agent(msg, "architect", provider_force="nemapi")
+        extracted = self.parse_json(raw)
+        plan = extracted[0] if extracted else {"version": 2, "actions": []}
+
+        # --- LE FILTRE DE FER ---
+        # DeepSeek essaie de coder l'UI sans déléguer ? Rejet + rappel à l'ordre.
+        if self._plan_cheats(plan):
+            print(f"[{task_id}] DeepSeek a tenté de coder l'UI sans déléguer. Rejet du plan.")
+            retry_msg = ("ERREUR CRITIQUE : ton plan ÉCRIT des fichiers frontend "
+                         "(.html/.css/.js) toi-même. C'est INTERDIT. Remplace chaque "
+                         "fichier UI par une action delegate avec le champ path "
+                         "(UN fichier par délégation). La LOGIQUE Python "
+                         "(write_file sur .py) reste autorisée et attendue.")
+            raw, _, _ = self.call_agent(retry_msg, "architect", provider_force="nemapi")
+            extracted = self.parse_json(raw)
+            plan = extracted[0] if extracted else {"version": 2, "actions": []}
+
+            if self._plan_cheats(plan):
+                # Triche persistante : on retire les actions UI non déléguées pour
+                # protéger la convention utilisateur (Gemini = seul maître de l'UI).
+                clean_actions = [
+                    a for a in plan.get("actions", [])
+                    if not is_ui_write(a)
+                ]
+                removed = len(plan.get("actions", [])) - len(clean_actions)
+                plan["actions"] = clean_actions
+                print(f"[{task_id}] Triche persistante : {removed} action(s) UI retirée(s).")
+                return plan, {"status": "warning", "category": "dual_expert",
+                              "summary": f"DeepSeek persistait à coder l'UI : {removed} action(s) retirée(s)."}
+
+        return plan, {"status": "success", "category": "dual_expert",
+                      "summary": "Pilotage DeepSeek validé."}

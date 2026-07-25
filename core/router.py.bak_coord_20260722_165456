@@ -1,0 +1,32 @@
+from dataclasses import dataclass
+from typing import List
+
+@dataclass
+class RoutingDecision:
+    category: str
+    roles: List[str]
+    parallel: bool
+    confidence: float
+    explanation: str
+
+class IntelligentRouter:
+    def route(self, prompt: str) -> RoutingDecision:
+        text = (prompt or "").lower()
+        
+        # DÉTECTION PRIORITAIRE : DUAL-EXPERT (Projet Complet)
+        if any(x in text for x in ("projet", "application complète", "développer un", "système de", "créer une app", "crée un projet")):
+            return RoutingDecision("dual_expert", ["architect", "ui_expert", "logic_expert"], True, 0.95, "Flux Dual-Expert : DeepSeek (Logique) + Gemini (UI).")
+
+        # 1. ARCHITECTURE
+        if any(x in text for x in ("architecture", "structure", "concevoir", "organiser")):
+            return RoutingDecision("architect", ["planner", "code", "review"], False, 0.90, "Tâche structurelle.")
+
+        # 2. SÉCURITÉ
+        if any(x in text for x in ("faille", "securite", "vulnerabilite")):
+            return RoutingDecision("security", ["research", "system", "review"], True, 0.85, "Alerte sécurité.")
+
+        # 3. CODE
+        if any(x in text for x in ("python", "code", "bug", "html", "api")):
+            return RoutingDecision("code", ["code", "review"], True, 0.80, "Développement.")
+
+        return RoutingDecision("general", ["planner", "review"], True, 0.50, "Demande générale.")
